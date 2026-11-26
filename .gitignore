@@ -15,6 +15,7 @@ clips/
 clips_test/
 samples/
 *.mp4
+!assets/*.mp4
 *.mkv
 *.webm
 *.wav
@@ -22,6 +23,7 @@ samples/
 *.ass
 *.jpg
 *.png
+!assets/*.gif
 
 # Cloned HypeCut sub-repository (keep separate from root repo unless added as submodule)
 hypecut/
