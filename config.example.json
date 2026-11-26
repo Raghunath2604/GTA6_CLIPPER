@@ -1,0 +1,13 @@
+{
+    "gemini_api_key": "",
+    "streamer_urls": "https://www.youtube.com/@IShowSpeed/streams\nhttps://www.youtube.com/@TGGOfficial/videos\nhttps://www.youtube.com/@DarkViperAU/streams\nhttps://www.youtube.com/@NoughtPointFourLIVE/streams\nhttps://www.youtube.com/@Mythpat/streams",
+    "parallel_workers": 3,
+    "live_mode": "record_buffer",
+    "clips_per_stream": 5,
+    "clip_duration_seconds": 35,
+    "max_capture_minutes": 30,
+    "auto_subtitles": true,
+    "burn_hook_banner": true,
+    "auto_cleanup": true,
+    "output_dir": "Output_Clips"
+}

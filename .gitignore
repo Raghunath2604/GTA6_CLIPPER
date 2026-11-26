@@ -1,0 +1,36 @@
+# Secrets & OAuth Tokens (NEVER commit)
+.env
+hypecut/.env
+client_secret*.json
+*apps.googleusercontent.com.json
+token.json
+canva_token.json
+ig_session.json
+config.json
+processed_videos.txt
+
+# Generated Media, Buffers & Temp Assets
+Output_Clips/
+clips/
+clips_test/
+samples/
+*.mp4
+*.mkv
+*.webm
+*.wav
+*.srt
+*.ass
+*.jpg
+*.png
+
+# Cloned HypeCut sub-repository (keep separate from root repo unless added as submodule)
+hypecut/
+
+# Python / IDE / OS
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.DS_Store
+Thumbs.db
