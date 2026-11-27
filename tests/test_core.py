@@ -1,21 +1,25 @@
+import json
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
+from googleapiclient.errors import HttpError
 
 import config
 import processed_tracker
+import youtube_uploader
 from ai_clipper import ViralClip, sanitize_clips
 from chat_analyzer import analyze_chat_explosions, calculate_top_hotspots
 from ffmpeg_utils import check_ffmpeg_health
 from media_packager import sanitize_filename, package_clip
-from stream_manager import is_direct_video_url
+from stream_manager import is_direct_video_url, build_live_hls_ffmpeg_args
 from subtitle_generator import (
     _format_srt_timestamp,
     split_segment_proportionally,
     split_words_into_short_cues,
 )
 from video_editor import _srt_ts_to_ass, _convert_srt_to_vertical_ass
-from youtube_uploader import sanitize_youtube_tags
+from youtube_uploader import sanitize_youtube_tags, _parse_youtube_http_error
 
 
 class CorePipelineTests(unittest.TestCase):
@@ -142,6 +146,90 @@ class CorePipelineTests(unittest.TestCase):
         h = check_ffmpeg_health()
         self.assertIn("ready", h)
         self.assertIn("ffmpeg_path", h)
+
+    def test_package_clip_extracts_hashtags_when_tags_missing(self):
+        with tempfile.TemporaryDirectory() as td:
+            mp4 = os.path.join(td, "src.mp4")
+            clean = os.path.join(td, "clean.jpg")
+            post = os.path.join(td, "post.jpg")
+            srt = os.path.join(td, "sub.srt")
+            for p in (mp4, clean, post, srt):
+                with open(p, "wb") as f:
+                    f.write(b"x")
+            folder = package_clip(
+                output_base_dir=td,
+                vid_id="vid123",
+                clip_index=1,
+                clip_info={
+                    "title": "Vice City Chaos",
+                    "hook_banner": "INSANE POLICE CHASE",
+                    "caption": "Watch this #GTA6 #ViceCity #gta6 moment!",
+                    "description": "Best highlight #RockstarGames",
+                    "trigger_type": "CLUTCH",
+                },
+                rendered_mp4_path=mp4,
+                clean_thumb_path=clean,
+                post_thumb_path=post,
+                srt_path=srt,
+            )
+            with open(os.path.join(folder, "metadata.json"), encoding="utf-8") as mf:
+                meta = json.load(mf)
+            self.assertEqual(meta["tags"][:3], ["GTA6", "ViceCity", "RockstarGames"])
+            self.assertIn("CLUTCH", meta["tags"])
+            self.assertEqual(len([t for t in meta["tags"] if t.lower() == "gta6"]), 1)
+            with open(os.path.join(folder, "SEO_metadata.txt"), encoding="utf-8") as sf:
+                self.assertIn("GTA6, ViceCity, RockstarGames", sf.read())
+
+    def test_live_hls_ffmpeg_args_include_reconnect_flags(self):
+        dual = build_live_hls_ffmpeg_args(
+            "https://example.com/video.m3u8",
+            "https://example.com/audio.m3u8",
+            120,
+            "out.mp4",
+        )
+        self.assertIsNotNone(dual)
+        self.assertEqual(dual.count("-reconnect"), 2)
+        v_idx = dual.index("https://example.com/video.m3u8")
+        self.assertEqual(dual[v_idx - 7:v_idx + 1], ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", "-i", "https://example.com/video.m3u8"])
+        a_idx = dual.index("https://example.com/audio.m3u8")
+        self.assertEqual(dual[a_idx - 7:a_idx + 1], ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", "-i", "https://example.com/audio.m3u8"])
+
+        single = build_live_hls_ffmpeg_args("https://example.com/muxed.m3u8", None, 90, "out.mp4")
+        self.assertEqual(single.count("-reconnect"), 1)
+        self.assertIn("copy", single)
+
+        local = build_live_hls_ffmpeg_args("local.ts", None, 90, "out.mp4")
+        self.assertNotIn("-reconnect", local)
+        self.assertIsNone(build_live_hls_ffmpeg_args(None, None, 90, "out.mp4"))
+
+    def test_youtube_non_interactive_auth_raises_fast(self):
+        with tempfile.TemporaryDirectory() as td:
+            secret = os.path.join(td, "client_secret.json")
+            with open(secret, "w", encoding="utf-8") as f:
+                f.write("{}")
+            orig_token = youtube_uploader.TOKEN_FILE
+            orig_finder = youtube_uploader.find_client_secret_file
+            try:
+                youtube_uploader.TOKEN_FILE = os.path.join(td, "missing_token.json")
+                youtube_uploader.find_client_secret_file = lambda: secret
+                with self.assertRaises(RuntimeError) as ctx:
+                    youtube_uploader.get_authenticated_service(interactive=False)
+                self.assertIn("Login_CLI.bat", str(ctx.exception))
+            finally:
+                youtube_uploader.TOKEN_FILE = orig_token
+                youtube_uploader.find_client_secret_file = orig_finder
+
+    def test_youtube_quota_exceeded_error_message(self):
+        err_403 = HttpError(
+            SimpleNamespace(status=403, reason="Forbidden"),
+            b'{"error":{"errors":[{"reason":"quotaExceeded"}]}}',
+        )
+        msg = _parse_youtube_http_error(err_403)
+        self.assertIsNotNone(msg)
+        self.assertIn("quotaExceeded", msg)
+
+        err_404 = HttpError(SimpleNamespace(status=404, reason="Not Found"), b"{}")
+        self.assertIsNone(_parse_youtube_http_error(err_404))
 
 
 if __name__ == "__main__":

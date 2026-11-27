@@ -276,6 +276,24 @@ with st.sidebar:
                         st.warning("Enter both token and account ID.")
 
 
+def _update_clip_metadata(folder_path: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge updated fields into a clip folder's metadata.json safely."""
+    meta_path = os.path.join(folder_path, "metadata.json")
+    meta_obj: Dict[str, Any] = {}
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as mf:
+                loaded = json.load(mf)
+                if isinstance(loaded, dict):
+                    meta_obj = loaded
+        except Exception:
+            meta_obj = {}
+    meta_obj.update(updates)
+    with open(meta_path, "w", encoding="utf-8") as mf:
+        json.dump(meta_obj, mf, indent=2)
+    return meta_obj
+
+
 def get_existing_clips() -> List[Dict[str, Any]]:
     output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), st.session_state.config.get("output_dir", "Output_Clips"))
     if not os.path.exists(output_dir):
@@ -304,6 +322,8 @@ def get_existing_clips() -> List[Dict[str, Any]]:
         tags = []
         viral_score = 8
         trigger_type = "VIRAL_MOMENT"
+        youtube_upload = None
+        instagram_upload = None
 
         if meta_json_files and os.path.exists(meta_json_files[0]):
             try:
@@ -316,6 +336,8 @@ def get_existing_clips() -> List[Dict[str, Any]]:
                     tags = mj.get("tags") or mj.get("hashtags") or []
                     viral_score = mj.get("viral_score", 8)
                     trigger_type = mj.get("trigger_type", "VIRAL_MOMENT")
+                    youtube_upload = mj.get("youtube_upload")
+                    instagram_upload = mj.get("instagram_upload")
             except Exception:
                 pass
 
@@ -358,7 +380,9 @@ def get_existing_clips() -> List[Dict[str, Any]]:
             "description": description,
             "tags": [str(t).lstrip("#") for t in tags] if isinstance(tags, list) else [],
             "viral_score": viral_score,
-            "trigger_type": trigger_type
+            "trigger_type": trigger_type,
+            "youtube_upload": youtube_upload,
+            "instagram_upload": instagram_upload,
         })
     return clips
 
@@ -533,11 +557,16 @@ else:
                 height=100
             )
 
-            btn_col1, btn_col2, btn_col3, btn_col4 = st.columns([1.8, 1.8, 1.1, 1.1])
-            
+            yt_up = st.session_state.upload_status.get(folder_id) or clip.get("youtube_upload")
+            ig_up = st.session_state.get("ig_upload_status", {}).get(folder_id) or clip.get("instagram_upload")
+
+            btn_col1, btn_col2, btn_col3, btn_col4, btn_col5 = st.columns([1.7, 1.7, 1.0, 1.0, 0.9])
+
             with btn_col1:
                 upload_key = f"upload_yt_{folder_id}"
-                if st.button("📤 Post to YouTube Shorts", key=upload_key, type="primary", width="stretch"):
+                yt_label = "✅ Re-upload YT" if yt_up else "📤 Post to YouTube Shorts"
+                yt_type = "secondary" if yt_up else "primary"
+                if st.button(yt_label, key=upload_key, type=yt_type, width="stretch"):
                     if not clip["mp4"] or not os.path.exists(clip["mp4"]):
                         st.error("Video file does not exist.")
                     else:
@@ -549,16 +578,19 @@ else:
                                     description=edit_desc,
                                     tags=clip.get("tags"),
                                     privacy_status="private",
-                                    thumbnail_path=clip.get("post_thumb")
+                                    thumbnail_path=clip.get("post_thumb"),
+                                    interactive=False,
                                 )
                                 st.session_state.upload_status[folder_id] = res
+                                _update_clip_metadata(clip["folder"], {"youtube_upload": res})
                                 st.success(f"Uploaded to YouTube! Video ID: {res['video_id']}")
                             except Exception as up_err:
                                 st.error(f"YouTube upload failed: {up_err}")
 
             with btn_col2:
                 ig_key = f"upload_ig_{folder_id}"
-                if st.button("📸 Post to Instagram Reels", key=ig_key, width="stretch"):
+                ig_label = "✅ Re-upload IG" if ig_up else "📸 Post to Instagram Reels"
+                if st.button(ig_label, key=ig_key, width="stretch"):
                     if not is_instagram_connected():
                         st.info("💡 Connect your Instagram in the left sidebar (Direct Account Login or Meta Graph API) to post Reels.")
                     else:
@@ -570,6 +602,8 @@ else:
                                     thumbnail_path=clip.get("post_thumb")
                                 )
                                 if ig_res.get("status") == "success":
+                                    st.session_state.setdefault("ig_upload_status", {})[folder_id] = ig_res
+                                    _update_clip_metadata(clip["folder"], {"instagram_upload": ig_res})
                                     reel_link = ig_res.get("url") or f"https://www.instagram.com/reel/{ig_res.get('code', '')}/"
                                     st.success(f"Published to Instagram Reel! 🔗 [Open Reel]({reel_link})")
                                 else:
@@ -587,20 +621,12 @@ else:
             with btn_col4:
                 if st.button("💾 Save", key=f"save_{folder_id}", width="stretch"):
                     try:
-                        meta_path = os.path.join(clip["folder"], "metadata.json")
-                        if os.path.exists(meta_path):
-                            with open(meta_path, "r", encoding="utf-8") as mf:
-                                meta_obj = json.load(mf)
-                        else:
-                            meta_obj = {}
-                        meta_obj.update({
+                        _update_clip_metadata(clip["folder"], {
                             "title": edit_title,
                             "caption": edit_caption,
                             "description": edit_desc,
                             "seo_description": edit_desc,
                         })
-                        with open(meta_path, "w", encoding="utf-8") as mf:
-                            json.dump(meta_obj, mf, indent=2)
 
                         seo_target = clip["seo_file"] or os.path.join(clip["folder"], "SEO_metadata.txt")
                         with open(seo_target, "w", encoding="utf-8") as f:
@@ -633,8 +659,18 @@ Source Stream ID      : {clip['folder_name'].split('_Clip')[0]}
                     except Exception as save_err:
                         st.error(f"Save error: {save_err}")
 
-            if folder_id in st.session_state.upload_status:
-                up_res = st.session_state.upload_status[folder_id]
-                st.info(f"🔗 YouTube Shorts Draft: [{up_res['url']}]({up_res['url']}) (Privacy: {up_res['privacy']})")
+            with btn_col5:
+                if st.button("🗑️ Delete", key=f"del_{folder_id}", width="stretch"):
+                    shutil.rmtree(clip["folder"], ignore_errors=True)
+                    st.session_state.upload_status.pop(folder_id, None)
+                    st.session_state.get("ig_upload_status", {}).pop(folder_id, None)
+                    st.toast(f"Deleted clip folder: {clip['folder_name']}", icon="🗑️")
+                    st.rerun()
+
+            if yt_up:
+                st.info(f"🔗 YouTube Shorts: [{yt_up.get('url')}]({yt_up.get('url')}) (Privacy: {yt_up.get('privacy', 'private')})")
+            if ig_up:
+                reel_link = ig_up.get("url") or f"https://www.instagram.com/reel/{ig_up.get('code', '')}/"
+                st.info(f"📸 Instagram Reel: [{reel_link}]({reel_link})")
 
         st.markdown('</div>', unsafe_allow_html=True)

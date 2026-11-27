@@ -143,6 +143,43 @@ def get_channel_latest_stream_info(input_url: str) -> Optional[Dict[str, Any]]:
 
     return None
 
+def _hls_http_input_args(url: str) -> list:
+    """Return FFmpeg input args with HTTP/HLS reconnect flags when url is HTTP(S)."""
+    if str(url).lower().startswith(("http://", "https://")):
+        return ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5", "-i", url]
+    return ["-i", url]
+
+
+def build_live_hls_ffmpeg_args(
+    video_m3u8: Optional[str],
+    audio_m3u8: Optional[str],
+    buffer_sec: int,
+    video_output_path: str,
+) -> Optional[list]:
+    """Build resilient FFmpeg capture args for a live HLS stream (video-only or muxed audio)."""
+    if not video_m3u8:
+        return None
+    args = ["-y", *_hls_http_input_args(video_m3u8)]
+    if audio_m3u8:
+        args.extend([
+            *_hls_http_input_args(audio_m3u8),
+            "-t", str(buffer_sec),
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-shortest",
+            "-movflags", "+faststart",
+            video_output_path,
+        ])
+    else:
+        args.extend([
+            "-t", str(buffer_sec),
+            "-c", "copy",
+            "-movflags", "+faststart",
+            video_output_path,
+        ])
+    return args
+
+
 def download_stream_or_buffer(
     stream_info: Dict[str, Any],
     work_dir: str,
@@ -207,29 +244,12 @@ def download_stream_or_buffer(
                     if aud_only:
                         audio_m3u8 = aud_only[-1]["url"]
 
-            if video_m3u8 and audio_m3u8:
-                ffmpeg_args = [
-                    "-y",
-                    "-i", video_m3u8,
-                    "-i", audio_m3u8,
-                    "-t", str(buffer_sec),
-                    "-c:v", "copy",
-                    "-c:a", "aac",
-                    "-shortest",
-                    "-movflags", "+faststart",
-                    video_output_path
-                ]
-            elif video_m3u8:
-                ffmpeg_args = [
-                    "-y",
-                    "-i", video_m3u8,
-                    "-t", str(buffer_sec),
-                    "-c", "copy",
-                    "-movflags", "+faststart",
-                    video_output_path
-                ]
-            else:
-                ffmpeg_args = None
+            ffmpeg_args = build_live_hls_ffmpeg_args(
+                video_m3u8=video_m3u8,
+                audio_m3u8=audio_m3u8,
+                buffer_sec=buffer_sec,
+                video_output_path=video_output_path,
+            )
 
             if ffmpeg_args:
                 log.info(f"Capturing live stream buffer via FFmpeg ({buffer_sec}s, muxed_audio={bool(audio_m3u8)})...")

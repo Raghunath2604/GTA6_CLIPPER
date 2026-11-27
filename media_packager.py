@@ -54,10 +54,25 @@ def package_clip(
         shutil.copyfile(srt_path, dest_srt)
 
     seo_txt_path = os.path.join(clip_folder, "SEO_metadata.txt")
-    tags = clip_info.get("tags", [
-        "Gaming", "Shorts", "Trending", "Viral",
-        clip_info.get("trigger_type", "MOMENT")
-    ])
+    raw_tags = clip_info.get("tags")
+    if not raw_tags:
+        text_for_tags = " ".join([
+            str(clip_info.get("caption", "") or ""),
+            str(clip_info.get("description", "") or ""),
+            str(clip_info.get("seo_description", "") or ""),
+        ])
+        extracted_tags = re.findall(r"#([A-Za-z0-9_]+)", text_for_tags)
+        raw_tags = extracted_tags + [
+            "Gaming", "Shorts", "Trending", "Viral",
+            clip_info.get("trigger_type", "MOMENT")
+        ]
+    tags = []
+    seen_tags = set()
+    for t in raw_tags:
+        clean_t = str(t).lstrip("#").strip()
+        if clean_t and clean_t.lower() not in seen_tags:
+            seen_tags.add(clean_t.lower())
+            tags.append(clean_t)
     seo_content = f"""=== YOUTUBE SHORTS SEO METADATA ===
 [TITLE]
 {clip_info.get('title', '')}

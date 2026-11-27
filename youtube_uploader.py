@@ -123,7 +123,24 @@ def get_oauth_status() -> Dict[str, Any]:
     }
 
 
-def get_authenticated_service():
+def _parse_youtube_http_error(http_err: HttpError) -> Optional[str]:
+    """Return an actionable message for well-known YouTube Data API HTTP errors."""
+    status = getattr(getattr(http_err, "resp", None), "status", None)
+    raw_content = getattr(http_err, "content", b"")
+    if isinstance(raw_content, bytes):
+        body = raw_content.decode("utf-8", errors="ignore")
+    else:
+        body = str(raw_content or "")
+    combined = f"{http_err} {body}"
+    if status == 403 and ("quotaExceeded" in combined or "uploadLimitExceeded" in combined):
+        return (
+            "YouTube Data API daily upload quota exceeded (HTTP 403 quotaExceeded). "
+            "Wait for the daily quota reset or request higher quota in Google Cloud Console."
+        )
+    return None
+
+
+def get_authenticated_service(interactive: bool = True):
     """Authenticates using client_secret.json and token.json."""
     creds = None
     if os.path.exists(TOKEN_FILE):
@@ -139,6 +156,11 @@ def get_authenticated_service():
             except Exception as e:
                 log.warning(f"OAuth token refresh error: {e}")
                 creds = None
+                if not interactive:
+                    raise RuntimeError(
+                        "YouTube OAuth token expired or revoked. "
+                        "Connect your YouTube channel in the sidebar or run Login_CLI.bat --service youtube."
+                    ) from e
 
         if not creds:
             secret_path = find_client_secret_file()
@@ -146,6 +168,11 @@ def get_authenticated_service():
                 raise FileNotFoundError(
                     "Missing 'client_secret.json'. Please download your OAuth 2.0 Client credentials JSON "
                     "from Google Cloud Console and place it into this project folder."
+                )
+            if not interactive:
+                raise RuntimeError(
+                    "YouTube OAuth required — connect your YouTube channel in the sidebar "
+                    "or run Login_CLI.bat --service youtube before uploading."
                 )
             flow = InstalledAppFlow.from_client_secrets_file(secret_path, SCOPES)
             creds = flow.run_local_server(port=0, open_browser=True)
@@ -162,7 +189,8 @@ def upload_short_to_youtube(
     description: str,
     tags: Optional[List[str]] = None,
     privacy_status: str = "private",
-    thumbnail_path: Optional[str] = None
+    thumbnail_path: Optional[str] = None,
+    interactive: bool = True,
 ) -> Dict[str, Any]:
     """
     Uploads 9:16 video to YouTube Shorts:
@@ -181,7 +209,7 @@ def upload_short_to_youtube(
     clean_desc = (description or clean_title).strip()[:5000]
     merged_tags = sanitize_youtube_tags(tags)
 
-    youtube = get_authenticated_service()
+    youtube = get_authenticated_service(interactive=interactive)
 
     body = {
         "snippet": {
@@ -223,6 +251,9 @@ def upload_short_to_youtube(
                 retry_count += 1
                 time.sleep(2 ** retry_count)
                 continue
+            friendly = _parse_youtube_http_error(http_err)
+            if friendly:
+                raise RuntimeError(friendly) from http_err
             raise
         except (OSError, TimeoutError) as net_err:
             if retry_count < 3:
