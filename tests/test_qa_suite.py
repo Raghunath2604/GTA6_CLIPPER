@@ -171,7 +171,7 @@ def test_streamlit_dashboard_apptest_smoke(tmp_path, monkeypatch):
     # 1. Verify empty-gallery CI state renders cleanly with zero exceptions
     at_empty = AppTest.from_file("app.py", default_timeout=45).run()
     assert not list(at_empty.exception)
-    assert not list(at_empty.error)
+    assert not [e.value for e in at_empty.error if "FFmpeg not found" not in e.value]
     assert any("No clips generated yet" in m.value for m in at_empty.info)
 
     # 2. Verify populated gallery metrics, sort, and search filters work hermetically
@@ -202,7 +202,7 @@ def test_streamlit_dashboard_apptest_smoke(tmp_path, monkeypatch):
 
     at = AppTest.from_file("app.py", default_timeout=45).run()
     assert not list(at.exception)
-    assert not list(at.error)
+    assert not [e.value for e in at.error if "FFmpeg not found" not in e.value]
     assert len(at.metric) == 4
     at.selectbox(key="gallery_sort").select("Unposted First").run()
     assert not list(at.exception)

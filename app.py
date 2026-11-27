@@ -271,7 +271,12 @@ with st.sidebar:
     if health["ffmpeg_ready"]:
         st.success(f"FFmpeg Ready • Encoder: `{health['encoder']}`")
     else:
-        st.error("FFmpeg not found! Run `winget install Gyan.FFmpeg`.")
+        install_cmd = (
+            "winget install Gyan.FFmpeg"
+            if sys.platform == "win32"
+            else ("brew install ffmpeg" if sys.platform == "darwin" else "sudo apt-get install ffmpeg")
+        )
+        st.error(f"FFmpeg not found! Run `{install_cmd}`.")
 
     if st.button("🧹 Clear Stale Temp Cache", key="sb_clear_tmp_btn", width="stretch"):
         removed_tmp = cleanup_stale_temp_dirs(max_age_sec=0)
