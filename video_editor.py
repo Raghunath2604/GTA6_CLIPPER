@@ -37,6 +37,8 @@ def create_hook_banner_overlay(
         "impact.ttf",
         "segui_sb.ttf",
         "calibrib.ttf",
+        "DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         r"C:\Windows\Fonts\arialbd.ttf",
         r"C:\Windows\Fonts\impact.ttf"
     ]
@@ -149,7 +151,7 @@ def render_viral_clip(
         clean_thumbnail_path
     ]
     run_ffmpeg(clean_thumb_args, timeout=60)
-    print(f"[Video Editor] Exported Canva Pro clean frame at {thumb_sec:.1f}s: {clean_thumbnail_path}")
+    log.info(f"Exported Canva clean frame at {thumb_sec:.1f}s: {clean_thumbnail_path}")
 
     unique_suffix = f"{os.getpid()}_{threading.get_ident()}"
     banner_png_path = os.path.join(temp_dir, f"temp_banner_{unique_suffix}.png")
@@ -161,9 +163,9 @@ def render_viral_clip(
                 banner_img = Image.open(banner_png_path).convert("RGBA")
                 composed = Image.alpha_composite(base_img, banner_img)
                 composed.convert("RGB").save(post_thumbnail_path, "JPEG", quality=95)
-                print(f"[Video Editor] Created ready-to-post thumbnail: {post_thumbnail_path}")
+                log.info(f"Created ready-to-post thumbnail: {post_thumbnail_path}")
             except Exception as e:
-                print(f"[Video Editor] Error compositing post thumbnail: {e}")
+                log.warning(f"Error compositing post thumbnail: {e}")
                 shutil.copyfile(clean_thumbnail_path, post_thumbnail_path)
     else:
         if os.path.exists(clean_thumbnail_path):
@@ -182,11 +184,17 @@ def render_viral_clip(
     if burn_subtitles and srt_path and os.path.exists(srt_path):
         try:
             _convert_srt_to_vertical_ass(srt_path, temp_burn_ass)
-            ass_escaped = temp_burn_ass.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+            ass_escaped = (
+                temp_burn_ass.replace("\\", "/")
+                .replace(":", "\\:")
+                .replace("'", "\\'")
+                .replace("[", "\\[")
+                .replace("]", "\\]")
+            )
             filters.append(f"{current_v}ass='{ass_escaped}'[vsubs]")
             current_v = "[vsubs]"
         except Exception as e:
-            print(f"[Video Editor] Warning preparing subtitle file for burn: {e}")
+            log.warning(f"Warning preparing subtitle file for burn: {e}")
 
     t0 = time.time()
     vcodec_args = detect_best_h264_encoder()

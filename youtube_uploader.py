@@ -18,6 +18,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 
+from config import atomic_write_text
 from logger import get_logger
 
 log = get_logger("youtube_uploader")
@@ -159,8 +160,7 @@ def get_oauth_status(validate_token: bool = False) -> Dict[str, Any]:
             elif creds.expired and creds.refresh_token:
                 if validate_token:
                     creds.refresh(Request())
-                    with open(TOKEN_FILE, "w", encoding="utf-8") as tf:
-                        tf.write(creds.to_json())
+                    atomic_write_text(TOKEN_FILE, creds.to_json())
                     token_valid = True
                 else:
                     token_valid = True
@@ -252,8 +252,7 @@ def get_authenticated_service(interactive: bool = True):
             flow = InstalledAppFlow.from_client_secrets_file(secret_path, SCOPES)
             creds = flow.run_local_server(port=0, open_browser=True)
 
-        with open(TOKEN_FILE, "w", encoding="utf-8") as token_f:
-            token_f.write(creds.to_json())
+        atomic_write_text(TOKEN_FILE, creds.to_json())
 
     return build("youtube", "v3", credentials=creds)
 

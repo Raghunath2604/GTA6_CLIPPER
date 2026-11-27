@@ -23,6 +23,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Verify no credentials are tracked in Git
+        run: |
+          if git grep -I -E "AQ\.[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{30,}|GOCSPX-[0-9A-Za-z_-]{15,}|ya29\.[0-9A-Za-z_-]{20,}" -- . ':(exclude).github/workflows/ci.yml'; then
+            echo "::error::Potential credential detected in tracked repository files."
+            exit 1
+          fi
+
       - name: Syntax check all Python modules
         run: |
           python -m py_compile ai_clipper.py app.py canva_connector.py chat_analyzer.py config.py ffmpeg_utils.py instagram_uploader.py logger.py login_cli.py media_packager.py pipeline.py processed_tracker.py run_real_clip.py stream_manager.py subtitle_generator.py video_editor.py youtube_uploader.py tests/test_core.py

@@ -30,10 +30,16 @@ samples/
 # Cloned HypeCut sub-repository (keep separate from root repo unless added as submodule)
 hypecut/
 
-# Python / IDE / OS
+# Python / IDE / Tests / OS
 __pycache__/
 *.py[cod]
 *.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+pytest.out
+*.log
 .venv/
 venv/
 .DS_Store

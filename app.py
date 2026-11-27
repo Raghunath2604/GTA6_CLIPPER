@@ -24,7 +24,7 @@ from typing import Dict, Any, List
 import config as cfg_module
 from ai_clipper import verify_gemini_api_key
 from ffmpeg_utils import check_ffmpeg_health, detect_best_h264_encoder
-from logger import LOG_FILE
+from logger import LOG_FILE, get_logger
 from media_packager import extract_tags_from_clip_info, format_seo_metadata_text
 from processed_tracker import is_processed, mark_processed, get_all_processed, TRACKER_FILE
 from stream_manager import get_channel_latest_stream_info, is_direct_video_url
@@ -412,8 +412,11 @@ with st.sidebar:
                     st.warning("Enter both Client ID and Client Secret.")
 
 
+app_log = get_logger("app")
+
+
 def _update_clip_metadata(folder_path: str, updates: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge updated fields into a clip folder's metadata.json safely."""
+    """Merge updated fields into a clip folder's metadata.json atomically."""
     meta_path = os.path.join(folder_path, "metadata.json")
     meta_obj: Dict[str, Any] = {}
     if os.path.exists(meta_path):
@@ -422,11 +425,11 @@ def _update_clip_metadata(folder_path: str, updates: Dict[str, Any]) -> Dict[str
                 loaded = json.load(mf)
                 if isinstance(loaded, dict):
                     meta_obj = loaded
-        except Exception:
+        except Exception as exc:
+            app_log.warning(f"Corrupt metadata.json reset at {meta_path}: {exc}")
             meta_obj = {}
     meta_obj.update(updates)
-    with open(meta_path, "w", encoding="utf-8") as mf:
-        json.dump(meta_obj, mf, indent=2)
+    cfg_module.atomic_write_json(meta_path, meta_obj, indent=2)
     return meta_obj
 
 
@@ -476,8 +479,8 @@ def get_existing_clips() -> List[Dict[str, Any]]:
                     trigger_type = mj.get("trigger_type", "VIRAL_MOMENT")
                     youtube_upload = mj.get("youtube_upload")
                     instagram_upload = mj.get("instagram_upload")
-            except Exception:
-                pass
+            except Exception as exc:
+                app_log.warning(f"Failed parsing {meta_json_files[0]}: {exc}")
 
         if (not caption or not description) and seo_files and os.path.exists(seo_files[0]):
             try:
@@ -493,11 +496,11 @@ def get_existing_clips() -> List[Dict[str, Any]]:
                         description = content.split("[YOUTUBE SHORTS DESCRIPTION]")[1].split("[TAGS")[0].split("[METRICS")[0].strip() or description
                     if "Viral Potential Score :" in content:
                         score_str = content.split("Viral Potential Score :")[1].split("/")[0].strip()
-                        viral_score = int(score_str)
+                        viral_score = int(round(float(score_str)))
                     if "Trigger Category      :" in content:
                         trigger_type = content.split("Trigger Category      :")[1].split("\n")[0].strip()
-            except Exception:
-                pass
+            except Exception as exc:
+                app_log.warning(f"Failed parsing {seo_files[0]}: {exc}")
 
         if not caption:
             caption = f"{title} 🔥 Watch this viral gaming moment! #Shorts #Gaming #Viral"

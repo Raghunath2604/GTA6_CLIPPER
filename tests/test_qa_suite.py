@@ -211,3 +211,23 @@ def test_streamlit_dashboard_apptest_smoke(tmp_path, monkeypatch):
     at.text_input(key="gallery_filter").input("nonexistent_clip_xyz").run()
     assert not list(at.exception)
     assert any("No clips match" in m.value for m in at.info)
+
+
+def test_atomic_write_helpers_leave_no_temp_files(tmp_path):
+    target = tmp_path / "nested" / "payload.json"
+    config.atomic_write_json(str(target), {"status": "ok", "count": 2})
+    assert target.exists()
+    assert '"status": "ok"' in target.read_text(encoding="utf-8")
+    leftover_tmps = list(target.parent.glob("*.tmp.*"))
+    assert leftover_tmps == []
+
+
+def test_dockerfile_and_dockerignore_production_hygiene():
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
+    dockerignore = (root / ".dockerignore").read_text(encoding="utf-8")
+    assert "USER appuser" in dockerfile
+    assert "HEALTHCHECK" in dockerfile
+    for secret_pat in (".env", "token.json", "client_secret*.json"):
+        assert secret_pat in dockerignore

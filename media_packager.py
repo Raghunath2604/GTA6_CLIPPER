@@ -15,6 +15,11 @@ import json
 import shutil
 from typing import Dict, Any, List, Optional
 
+from config import atomic_write_json, atomic_write_text
+from logger import get_logger
+
+log = get_logger("media_packager")
+
 def sanitize_filename(name: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9_\-]", "_", name)
     cleaned = re.sub(r"_+", "_", cleaned)
@@ -142,8 +147,7 @@ def package_clip(
         trigger_type=clip_info.get("trigger_type", "GAMING"),
         source_id=vid_id,
     )
-    with open(seo_txt_path, "w", encoding="utf-8") as f:
-        f.write(seo_content)
+    atomic_write_text(seo_txt_path, seo_content)
 
     meta_json_path = os.path.join(clip_folder, "metadata.json")
     meta_data = {
@@ -165,10 +169,9 @@ def package_clip(
         "post_thumbnail": f"thumbnail_{clip_index}.jpg",
         "srt_file": f"clip_{clip_index}.srt" if os.path.exists(dest_srt) else None
     }
-    with open(meta_json_path, "w", encoding="utf-8") as f:
-        json.dump(meta_data, f, indent=2)
+    atomic_write_json(meta_json_path, meta_data, indent=2)
 
-    print(f"[Packager] Packaged Clip #{clip_index} into: {clip_folder}")
+    log.info(f"Packaged Clip #{clip_index} into: {clip_folder}")
     return clip_folder
 
 def cleanup_temporary_stream_files(file_paths: List[Optional[str]]) -> None:

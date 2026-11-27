@@ -9,6 +9,10 @@ import json
 from typing import List, Dict, Tuple
 from collections import defaultdict
 
+from logger import get_logger
+
+log = get_logger("chat_analyzer")
+
 class ChatHotspot:
     def __init__(self, timestamp_seconds: float, message_count: int, spike_score: float):
         self.timestamp_seconds = timestamp_seconds
@@ -61,7 +65,7 @@ def parse_live_chat_timestamps(chat_file_path: str) -> List[float]:
                 except Exception:
                     continue
     except Exception as e:
-        print(f"[Chat Analyzer] Error parsing chat file {chat_file_path}: {e}")
+        log.warning(f"Error parsing chat file {chat_file_path}: {e}")
 
     return sorted(timestamps)
 

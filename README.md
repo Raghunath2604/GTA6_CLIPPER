@@ -153,11 +153,26 @@ GTA6_CLIPPER/
 
 ---
 
+## 🐳 Docker Deployment
+
+Run the full containerized dashboard (`ffmpeg`, `nodejs`, and non-root healthcheck included):
+
+```powershell
+docker build -t gta6-clipper .
+docker run -d -p 8501:8501 --env-file .env -v "${PWD}/Output_Clips:/app/Output_Clips" -v "${PWD}/logs:/app/logs" gta6-clipper
+```
+
+Health check endpoint: `http://localhost:8501/_stcore/health`
+
+---
+
 ## 🧪 Running Tests
 
 ```powershell
-python -m unittest discover -s tests -v
+python -m pytest -v
 ```
+
+Runtime diagnostics & errors are written to rotating logs at `logs/clipper.log`.
 
 ---
 
