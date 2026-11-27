@@ -21,11 +21,13 @@ import streamlit as st
 from typing import Dict, Any, List
 
 import config as cfg_module
+from ai_clipper import verify_gemini_api_key
 from ffmpeg_utils import check_ffmpeg_health, detect_best_h264_encoder
+from logger import LOG_FILE
 from media_packager import extract_tags_from_clip_info, format_seo_metadata_text
 from processed_tracker import is_processed, mark_processed, get_all_processed, TRACKER_FILE
 from stream_manager import get_channel_latest_stream_info, is_direct_video_url
-from pipeline import run_parallel_clipper, ChannelTaskState, process_single_streamer
+from pipeline import run_parallel_clipper, ChannelTaskState, process_single_streamer, cleanup_stale_temp_dirs
 from youtube_uploader import (
     get_oauth_status,
     get_authenticated_service,
@@ -163,6 +165,13 @@ with st.sidebar:
         st.session_state.config["gemini_api_key"] = gemini_key
         cfg_module.save_config({"gemini_api_key": gemini_key})
         st.toast("Saved Gemini API Key!", icon="💾")
+    if st.button("⚡ Test Gemini Key", key="sb_test_gemini_btn", width="stretch"):
+        with st.spinner("Testing Gemini API key..."):
+            g_res = verify_gemini_api_key(gemini_key)
+            if g_res.get("ok"):
+                st.success(f"Gemini Key Valid ✅ (`{g_res.get('model')}`)")
+            else:
+                st.error(f"Gemini check failed: {g_res.get('error')}")
 
     st.subheader("⏱️ Clip Duration & Slicing")
     clip_duration = st.slider(
@@ -253,6 +262,18 @@ with st.sidebar:
     else:
         st.error("FFmpeg not found! Run `winget install Gyan.FFmpeg`.")
 
+    if st.button("🧹 Clear Stale Temp Cache", key="sb_clear_tmp_btn", width="stretch"):
+        removed_tmp = cleanup_stale_temp_dirs(max_age_sec=0)
+        st.toast(f"Cleaned {removed_tmp} temp run folder(s).", icon="🧹")
+
+    with st.expander("🪵 System Log Tail"):
+        if os.path.exists(LOG_FILE):
+            with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as lf:
+                tail_lines = lf.readlines()[-35:]
+            st.code("".join(tail_lines) or "Log empty.", language=None)
+        else:
+            st.caption("No logs written yet.")
+
     st.divider()
     st.subheader("🔴 YouTube Shorts OAuth")
 
@@ -263,10 +284,16 @@ with st.sidebar:
     oauth_info = _cached_yt_oauth()
     if oauth_info.get("token_valid"):
         st.success("Authenticated & Connected ✅")
-        if st.button("🔌 Disconnect YouTube", key="sb_yt_disconnect_btn", width="stretch"):
-            disconnect_youtube()
-            _cached_yt_oauth.clear()
-            st.rerun()
+        yt_c1, yt_c2 = st.columns(2)
+        with yt_c1:
+            if st.button("🔄 Refresh", key="sb_yt_refresh_btn", width="stretch"):
+                _cached_yt_oauth.clear()
+                st.rerun()
+        with yt_c2:
+            if st.button("🔌 Disconnect", key="sb_yt_disconnect_btn", width="stretch"):
+                disconnect_youtube()
+                _cached_yt_oauth.clear()
+                st.rerun()
     elif oauth_info.get("has_secret"):
         if oauth_info.get("needs_reauth"):
             st.warning("⚠️ Token Expired / Revoked — Re-authorize below")
@@ -281,6 +308,9 @@ with st.sidebar:
                     st.rerun()
                 except Exception as auth_err:
                     st.error(f"YouTube sign-in notice: {auth_err}")
+        if st.button("🔄 Re-check Auth Status", key="sb_yt_recheck_btn", width="stretch"):
+            _cached_yt_oauth.clear()
+            st.rerun()
     else:
         st.warning(oauth_info["status_text"])
 
@@ -401,6 +431,7 @@ def get_existing_clips() -> List[Dict[str, Any]]:
         meta_json_files = glob.glob(os.path.join(folder, "metadata.json"))
 
         title = folder_name
+        video_id = folder_name.split("_Clip")[0]
         hook = ""
         caption = ""
         description = ""
@@ -414,6 +445,7 @@ def get_existing_clips() -> List[Dict[str, Any]]:
             try:
                 with open(meta_json_files[0], "r", encoding="utf-8") as f:
                     mj = json.load(f)
+                    video_id = mj.get("video_id") or video_id
                     title = mj.get("title") or title
                     hook = mj.get("hook_banner") or hook
                     caption = mj.get("caption") or caption
@@ -454,6 +486,7 @@ def get_existing_clips() -> List[Dict[str, Any]]:
         clips.append({
             "folder": folder,
             "folder_name": folder_name,
+            "video_id": video_id,
             "mp4": mp4_files[0] if mp4_files else None,
             "clean_thumb": clean_thumbs[0] if clean_thumbs else None,
             "post_thumb": post_thumbs[0] if post_thumbs else None,
@@ -609,11 +642,18 @@ else:
     m3.metric("Posted to YouTube", yt_posted)
     m4.metric("Posted to Instagram", ig_posted)
 
-    f1, f2 = st.columns([2.5, 1.5])
+    f1, f2, f3 = st.columns([2.0, 1.2, 1.3])
     with f1:
         filter_query = st.text_input("🔍 Filter clips (title, caption, or tag):", key="gallery_filter")
     with f2:
         min_score = st.slider("⭐ Min Viral Score:", min_value=1, max_value=10, value=1, key="gallery_min_score")
+    with f3:
+        sort_by = st.selectbox(
+            "📊 Sort By:",
+            options=["Newest First", "Highest Viral Score", "Unposted First"],
+            index=0,
+            key="gallery_sort",
+        )
 
     q = filter_query.strip().lower()
     filtered_clips = [
@@ -626,7 +666,21 @@ else:
             or q in " ".join(c.get("tags", [])).lower()
         )
     ]
+    if sort_by == "Highest Viral Score":
+        filtered_clips.sort(key=lambda c: float(c.get("viral_score", 0)), reverse=True)
+    elif sort_by == "Unposted First":
+        filtered_clips.sort(
+            key=lambda c: bool(
+                c.get("youtube_upload")
+                or c.get("instagram_upload")
+                or c["folder_name"] in st.session_state.upload_status
+                or c["folder_name"] in st.session_state.get("ig_upload_status", {})
+            )
+        )
+
     st.caption(f"Showing {len(filtered_clips)} of {len(clips_list)} clip(s) organized in `Output_Clips/`:")
+    if not filtered_clips:
+        st.info("No clips match your current filter. Try clearing search or lowering Min Viral Score.")
 
     canva_connected = get_canva_status().get("connected", False)
 
@@ -669,9 +723,14 @@ else:
                     st.image(clip["post_thumb"], caption="Ready-To-Post (Burned Hook)", width="stretch")
 
             if clip["srt"] and os.path.exists(clip["srt"]):
-                with st.expander("📝 View Subtitles (.srt)"):
+                with st.expander("📝 View / Edit Subtitles (.srt)"):
                     with open(clip["srt"], "r", encoding="utf-8", errors="replace") as sf:
-                        st.text_area("SRT Transcript", value=sf.read(), height=140, key=f"srt_view_{folder_id}", disabled=True)
+                        srt_content = sf.read()
+                    edited_srt = st.text_area("SRT Transcript", value=srt_content, height=140, key=f"srt_view_{folder_id}")
+                    if st.button("💾 Save Subtitles", key=f"save_srt_{folder_id}", width="stretch"):
+                        with open(clip["srt"], "w", encoding="utf-8") as sf:
+                            sf.write(edited_srt)
+                        st.toast("Saved subtitle edits to .srt!", icon="💾")
 
         with col_meta:
             st.markdown(
@@ -813,7 +872,7 @@ else:
                                 tags=effective_tags,
                                 viral_score=clip["viral_score"],
                                 trigger_type=clip["trigger_type"],
-                                source_id=clip["folder_name"].split("_Clip")[0],
+                                source_id=clip["video_id"],
                             ))
                         st.toast("Saved changes to metadata.json and SEO_metadata.txt!", icon="💾")
                     except Exception as save_err:

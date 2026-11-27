@@ -83,6 +83,26 @@ def sanitize_clips(
     return cleaned
 
 
+def verify_gemini_api_key(api_key: str) -> dict:
+    """Validate a Gemini API key against fast candidate models without uploading media."""
+    clean_key = (api_key or "").strip()
+    if not clean_key:
+        return {"ok": False, "error": "Gemini API key is empty."}
+    if not genai:
+        return {"ok": False, "error": "google-genai package is not installed."}
+
+    client = genai.Client(api_key=clean_key)
+    last_err = ""
+    for model_name in ("gemini-3-flash-preview", "gemini-flash-latest"):
+        try:
+            resp = client.models.generate_content(model=model_name, contents="Reply OK")
+            if resp and resp.text:
+                return {"ok": True, "model": model_name}
+        except Exception as e:
+            last_err = str(e)
+    return {"ok": False, "error": last_err[:220] or "Verification failed."}
+
+
 def _generate_fallback_clips(
     hotspots: List[ChatHotspot],
     video_duration: float,

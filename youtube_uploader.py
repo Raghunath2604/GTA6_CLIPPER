@@ -228,6 +228,8 @@ def get_authenticated_service(interactive: bool = True):
                         "YouTube OAuth token expired or revoked. "
                         "Connect your YouTube channel in the sidebar or run Login_CLI.bat --service youtube."
                     ) from e
+        else:
+            creds = None
 
         if not creds:
             secret_path = find_client_secret_file()

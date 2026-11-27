@@ -6,12 +6,10 @@ saving tokens and updating .env and config.json.
 
 import os
 import sys
-import glob
 import json
 import base64
 import hashlib
 import secrets
-import shutil
 import argparse
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -51,26 +49,9 @@ def update_env_variable(key: str, value: str):
         f.writelines(new_lines)
 
 def find_client_secret_file() -> str:
-    """Finds client_secret.json or any downloaded Google Cloud OAuth JSON file."""
-    if os.path.exists(CLIENT_SECRET_FILE) and os.path.getsize(CLIENT_SECRET_FILE) > 10:
-        return CLIENT_SECRET_FILE
-
-    patterns = [
-        os.path.join(BASE_DIR, "*client_secret*.json"),
-        os.path.join(BASE_DIR, "client_secrets*.json"),
-        os.path.join(BASE_DIR, "*.apps.googleusercontent.com.json")
-    ]
-    for pat in patterns:
-        for match in glob.glob(pat):
-            if match != CLIENT_SECRET_FILE and os.path.exists(match) and os.path.getsize(match) > 10:
-                try:
-                    shutil.copyfile(match, CLIENT_SECRET_FILE)
-                    print(f"[YouTube Uploader] Auto-detected '{os.path.basename(match)}' -> linked as 'client_secret.json'")
-                    return CLIENT_SECRET_FILE
-                except Exception:
-                    return match
-
-    return ""
+    """Delegate client secret resolution (glob or .env fallback) to youtube_uploader."""
+    from youtube_uploader import find_client_secret_file as yt_find_secret
+    return yt_find_secret() or ""
 
 # =====================================================================
 # YOUTUBE OAUTH 2.0 CLI LOGIN
@@ -82,7 +63,6 @@ def login_youtube():
     print("=======================================================")
 
     from google_auth_oauthlib.flow import InstalledAppFlow
-    from google.oauth2.credentials import Credentials
 
     SCOPES = [
         "https://www.googleapis.com/auth/youtube.upload",

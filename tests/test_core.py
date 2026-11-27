@@ -1,15 +1,17 @@
 import json
 import os
 import tempfile
+import time
 import unittest
 from types import SimpleNamespace
 from googleapiclient.errors import HttpError
 
 import config
 import canva_connector
+import pipeline
 import processed_tracker
 import youtube_uploader
-from ai_clipper import ViralClip, sanitize_clips
+from ai_clipper import ViralClip, sanitize_clips, verify_gemini_api_key
 from chat_analyzer import analyze_chat_explosions, calculate_top_hotspots
 from ffmpeg_utils import check_ffmpeg_health
 from media_packager import (
@@ -372,6 +374,54 @@ class CorePipelineTests(unittest.TestCase):
         self.assertIn("[TAGS]", txt)
         self.assertIn("GTA6, Shorts, Gaming", txt)
         self.assertIn("20 (Gaming)", txt)
+
+    def test_youtube_expired_token_without_refresh_token_raises_in_headless(self):
+        with tempfile.TemporaryDirectory() as td:
+            secret_file = os.path.join(td, "client_secret.json")
+            token_file = os.path.join(td, "token.json")
+            with open(secret_file, "w", encoding="utf-8") as sf:
+                sf.write("{}")
+            with open(token_file, "w", encoding="utf-8") as tf:
+                tf.write('{"token": "stale"}')
+            orig_tok = youtube_uploader.TOKEN_FILE
+            orig_finder = youtube_uploader.find_client_secret_file
+            orig_from_file = youtube_uploader.Credentials.from_authorized_user_file
+            try:
+                youtube_uploader.TOKEN_FILE = token_file
+                youtube_uploader.find_client_secret_file = lambda: secret_file
+                youtube_uploader.Credentials.from_authorized_user_file = classmethod(
+                    lambda cls, p, scopes: SimpleNamespace(valid=False, expired=True, refresh_token=None)
+                )
+                with self.assertRaises(RuntimeError):
+                    youtube_uploader.get_authenticated_service(interactive=False)
+            finally:
+                youtube_uploader.TOKEN_FILE = orig_tok
+                youtube_uploader.find_client_secret_file = orig_finder
+                youtube_uploader.Credentials.from_authorized_user_file = orig_from_file
+
+    def test_cleanup_stale_temp_dirs_removes_only_expired(self):
+        root_tmp = os.path.join(tempfile.gettempdir(), "gta6_clipper_tmp")
+        os.makedirs(root_tmp, exist_ok=True)
+        suffix = f"{os.getpid()}_{int(time.time())}"
+        old_dir = os.path.join(root_tmp, f"_ut_old_{suffix}")
+        fresh_dir = os.path.join(root_tmp, f"_ut_fresh_{suffix}")
+        os.makedirs(old_dir, exist_ok=True)
+        os.makedirs(fresh_dir, exist_ok=True)
+        stale_ts = time.time() - 5000
+        os.utime(old_dir, (stale_ts, stale_ts))
+        try:
+            pipeline.cleanup_stale_temp_dirs(max_age_sec=3600)
+            self.assertFalse(os.path.exists(old_dir))
+            self.assertTrue(os.path.exists(fresh_dir))
+        finally:
+            for d in (old_dir, fresh_dir):
+                if os.path.exists(d):
+                    os.rmdir(d)
+
+    def test_verify_gemini_api_key_handles_empty_key(self):
+        res = verify_gemini_api_key("")
+        self.assertFalse(res["ok"])
+        self.assertIn("empty", res["error"].lower())
 
 
 if __name__ == "__main__":

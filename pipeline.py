@@ -25,6 +25,26 @@ log = get_logger("pipeline")
 FFMPEG_LOCK = threading.Lock()
 
 
+def cleanup_stale_temp_dirs(max_age_sec: int = 7200) -> int:
+    """Remove orphaned per-run temp directories older than max_age_sec."""
+    root_tmp = os.path.join(tempfile.gettempdir(), "gta6_clipper_tmp")
+    if not os.path.exists(root_tmp):
+        return 0
+    removed = 0
+    now = time.time()
+    for name in os.listdir(root_tmp):
+        full = os.path.join(root_tmp, name)
+        if not os.path.isdir(full):
+            continue
+        try:
+            if (now - os.path.getmtime(full)) >= max_age_sec:
+                shutil.rmtree(full, ignore_errors=True)
+                removed += 1
+        except Exception:
+            continue
+    return removed
+
+
 class ChannelTaskState:
     def __init__(self, channel_url: str):
         self.channel_url = channel_url
