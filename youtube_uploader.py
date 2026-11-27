@@ -199,11 +199,17 @@ def _parse_youtube_http_error(http_err: HttpError) -> Optional[str]:
     else:
         body = str(raw_content or "")
     combined = f"{http_err} {body}"
+    if status == 401 or "youtubeSignupRequired" in combined:
+        if "youtubeSignupRequired" in combined:
+            return "The authenticated Google account does not have a YouTube channel created yet."
+        return "YouTube OAuth session rejected (HTTP 401). Re-authorize your YouTube channel."
     if status == 403 and ("quotaExceeded" in combined or "uploadLimitExceeded" in combined):
         return (
             "YouTube Data API daily upload quota exceeded (HTTP 403 quotaExceeded). "
             "Wait for the daily quota reset or request higher quota in Google Cloud Console."
         )
+    if status == 403 and "accessNotConfigured" in combined:
+        return "YouTube Data API v3 is not enabled for this Google Cloud project."
     return None
 
 
@@ -269,6 +275,8 @@ def upload_short_to_youtube(
     """
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video file not found: {video_path}")
+    if os.path.getsize(video_path) < 1024:
+        raise ValueError(f"Video file is empty or corrupt: {video_path}")
 
     clean_title = (title or "Gaming Highlight").strip()
     if "#shorts" not in clean_title.lower():
@@ -332,18 +340,23 @@ def upload_short_to_youtube(
                 continue
             raise
 
-    video_id = response.get("id")
+    video_id = response.get("id") if isinstance(response, dict) else None
+    if not video_id:
+        raise RuntimeError(f"YouTube upload returned no video ID: {response}")
     shorts_url = f"https://www.youtube.com/shorts/{video_id}"
     log.info(f"YouTube upload complete! Video ID: {video_id} -> {shorts_url}")
 
     thumb_set = False
     if thumbnail_path and os.path.exists(thumbnail_path):
-        try:
-            thumb_media = MediaFileUpload(thumbnail_path, mimetype="image/jpeg")
-            youtube.thumbnails().set(videoId=video_id, media_body=thumb_media).execute()
-            thumb_set = True
-        except Exception as thumb_err:
-            log.warning(f"Custom thumbnail warning: {thumb_err}")
+        if os.path.getsize(thumbnail_path) > 2 * 1024 * 1024:
+            log.warning(f"Skipping custom thumbnail >2MB YouTube limit: {thumbnail_path}")
+        else:
+            try:
+                thumb_media = MediaFileUpload(thumbnail_path, mimetype="image/jpeg")
+                youtube.thumbnails().set(videoId=video_id, media_body=thumb_media).execute()
+                thumb_set = True
+            except Exception as thumb_err:
+                log.warning(f"Custom thumbnail warning: {thumb_err}")
 
     return {
         "status": "success",

@@ -50,7 +50,7 @@ def create_hook_banner_overlay(
     if not font:
         font = ImageFont.load_default()
 
-    words = banner_text.split()
+    words = banner_text.split() or ["WATCH", "THIS", "MOMENT"]
     lines = []
     curr_line = []
     for w in words:
@@ -214,7 +214,8 @@ def render_viral_clip(
         log.warning(f"GPU encoder {vcodec_args[1]} failed on filter chain; retrying with CPU libx264...")
         res = run_ffmpeg(_build_render_args(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "21"]), timeout=600)
 
-    if res.returncode != 0:
+    render_ok = res.returncode == 0
+    if not render_ok:
         log.warning(f"Overlay filter render failed ({res.stderr[-300:]}); falling back to clean 9:16 crop...")
         fallback_args = [
             "-threads", "0", "-y",
@@ -225,7 +226,8 @@ def render_viral_clip(
             "-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
             output_clip_path
         ]
-        run_ffmpeg(fallback_args, timeout=600)
+        fb_res = run_ffmpeg(fallback_args, timeout=600)
+        render_ok = fb_res.returncode == 0
     else:
         log.info(f"Rendered {os.path.basename(output_clip_path)} in {time.time() - t0:.1f}s")
 
@@ -236,7 +238,7 @@ def render_viral_clip(
             except Exception:
                 pass
 
-    return os.path.exists(output_clip_path) and os.path.getsize(output_clip_path) > 1000
+    return render_ok and os.path.exists(output_clip_path) and os.path.getsize(output_clip_path) > 1000
 
 
 def _srt_ts_to_ass(ts: str) -> str:

@@ -122,7 +122,8 @@ def analyze_chat_explosions(
         if hotspots:
             return hotspots
 
-    step = video_duration_sec / (top_n + 1)
+    safe_dur = max(1.0, float(video_duration_sec or 0.0))
+    step = safe_dur / (top_n + 1)
     fallback_hotspots = []
     for i in range(1, top_n + 1):
         ts = step * i

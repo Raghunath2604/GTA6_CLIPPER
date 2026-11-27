@@ -11,6 +11,7 @@ import base64
 import requests
 from typing import Dict, Any, Optional
 
+from config import update_env_file
 from logger import get_logger
 
 log = get_logger("canva_connector")
@@ -81,11 +82,6 @@ def save_canva_credentials(
     refresh_token: Optional[str] = None,
 ) -> None:
     """Persist Canva configuration keys cleanly into .env and process environment."""
-    lines = []
-    if os.path.exists(ENV_FILE):
-        with open(ENV_FILE, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-
     updates: Dict[str, str] = {}
     for key, val in (
         ("CANVA_CLIENT_ID", client_id),
@@ -96,28 +92,8 @@ def save_canva_credentials(
     ):
         if val is not None:
             updates[key] = val.strip()
-
-    new_lines = []
-    found_keys = set()
-    for line in lines:
-        matched = False
-        for k, v in updates.items():
-            if line.strip().startswith(f"{k}=") or line.strip().startswith(f"# {k}="):
-                new_lines.append(f"{k}={v}\n")
-                found_keys.add(k)
-                os.environ[k] = v
-                matched = True
-                break
-        if not matched:
-            new_lines.append(line)
-
-    for k, v in updates.items():
-        if k not in found_keys:
-            new_lines.append(f"{k}={v}\n")
-            os.environ[k] = v
-
-    with open(ENV_FILE, "w", encoding="utf-8") as f:
-        f.writelines(new_lines)
+    if updates:
+        update_env_file(ENV_FILE, updates)
 
 
 def disconnect_canva() -> None:

@@ -14,6 +14,7 @@ import time
 import requests
 from typing import Dict, Any, Optional
 
+from config import update_env_file
 from ffmpeg_utils import get_media_duration
 from logger import get_logger
 
@@ -94,12 +95,7 @@ def save_instagram_credentials(
     account_id: Optional[str] = None
 ) -> None:
     """Updates or appends Instagram credentials to the project .env file."""
-    lines = []
-    if os.path.exists(ENV_FILE):
-        with open(ENV_FILE, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-
-    updates = {}
+    updates: Dict[str, str] = {}
     if username is not None:
         updates["INSTAGRAM_USERNAME"] = username
     if password is not None:
@@ -108,28 +104,8 @@ def save_instagram_credentials(
         updates["INSTAGRAM_ACCESS_TOKEN"] = access_token
     if account_id is not None:
         updates["INSTAGRAM_ACCOUNT_ID"] = account_id
-
-    new_lines = []
-    found_keys = set()
-    for line in lines:
-        matched = False
-        for k, v in updates.items():
-            if line.strip().startswith(f"{k}=") or line.strip().startswith(f"# {k}="):
-                new_lines.append(f"{k}={v}\n")
-                found_keys.add(k)
-                os.environ[k] = v
-                matched = True
-                break
-        if not matched:
-            new_lines.append(line)
-
-    for k, v in updates.items():
-        if k not in found_keys:
-            new_lines.append(f"{k}={v}\n")
-            os.environ[k] = v
-
-    with open(ENV_FILE, "w", encoding="utf-8") as f:
-        f.writelines(new_lines)
+    if updates:
+        update_env_file(ENV_FILE, updates)
 
 
 def _validate_reel_file(video_path: str) -> Optional[str]:
@@ -339,6 +315,9 @@ def upload_reel_meta_graph(
                 params={"access_token": token, "fields": "status_code,status"},
                 timeout=15
             ).json()
+            if "error" in s_res:
+                err_msg = s_res["error"].get("message", "Meta Graph container status error")
+                return {"status": "error", "error": err_msg}
             code = s_res.get("status_code")
             if code == "FINISHED":
                 finished = True

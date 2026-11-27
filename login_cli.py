@@ -16,6 +16,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 import requests
 
+from config import update_env_file
 from dotenv import load_dotenv
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -28,25 +29,7 @@ load_dotenv(ENV_FILE)
 
 def update_env_variable(key: str, value: str):
     """Updates or appends a key-value pair in the .env file."""
-    lines = []
-    found = False
-    if os.path.exists(ENV_FILE):
-        with open(ENV_FILE, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-
-    new_lines = []
-    for line in lines:
-        if line.strip().startswith(f"{key}=") or line.strip().startswith(f"# {key}="):
-            new_lines.append(f"{key}={value}\n")
-            found = True
-        else:
-            new_lines.append(line)
-
-    if not found:
-        new_lines.append(f"{key}={value}\n")
-
-    with open(ENV_FILE, "w", encoding="utf-8") as f:
-        f.writelines(new_lines)
+    update_env_file(ENV_FILE, {key: value})
 
 def find_client_secret_file() -> str:
     """Delegate client secret resolution (glob or .env fallback) to youtube_uploader."""

@@ -14,6 +14,7 @@ import os
 import sys
 import glob
 import json
+import hashlib
 import shutil
 import threading
 import subprocess
@@ -113,6 +114,17 @@ class RunnerState:
             self.logs = [initial_log]
             self.task_states = {}
 
+    def try_start(self, initial_log: str) -> bool:
+        """Atomically start a pipeline run only if idle; prevents double-click race."""
+        with self.lock:
+            if self.running:
+                return False
+            self.running = True
+            self.needs_gallery_refresh = False
+            self.logs = [initial_log]
+            self.task_states = {}
+            return True
+
     def add_log(self, msg: str):
         with self.lock:
             self.logs.append(msg)
@@ -162,8 +174,7 @@ with st.sidebar:
         help="Used for multimodal viral highlight selection (gemini-3-flash-preview / gemini-flash-latest)."
     )
     if gemini_key != st.session_state.config.get("gemini_api_key", ""):
-        st.session_state.config["gemini_api_key"] = gemini_key
-        cfg_module.save_config({"gemini_api_key": gemini_key})
+        st.session_state.config = cfg_module.save_config({"gemini_api_key": gemini_key})
         st.toast("Saved Gemini API Key!", icon="💾")
     if st.button("⚡ Test Gemini Key", key="sb_test_gemini_btn", width="stretch"):
         with st.spinner("Testing Gemini API key..."):
@@ -317,16 +328,21 @@ with st.sidebar:
     with st.expander("📄 Update client_secret.json"):
         uploaded_secret = st.file_uploader("Upload Google OAuth JSON", type=["json"], key="sb_yt_secret_up")
         if uploaded_secret is not None:
-            try:
-                raw_bytes = uploaded_secret.getvalue()
-                json.loads(raw_bytes.decode("utf-8"))
-                with open(CLIENT_SECRET_FILE, "wb") as sf:
-                    sf.write(raw_bytes)
-                _cached_yt_oauth.clear()
-                st.success("Saved client_secret.json!")
-                st.rerun()
-            except Exception as sec_err:
-                st.error(f"Invalid JSON file: {sec_err}")
+            raw_bytes = uploaded_secret.getvalue()
+            secret_hash = hashlib.sha256(raw_bytes).hexdigest()
+            if st.session_state.get("last_secret_sha256") != secret_hash:
+                try:
+                    parsed_secret = json.loads(raw_bytes.decode("utf-8"))
+                    if not isinstance(parsed_secret, dict) or not ("installed" in parsed_secret or "web" in parsed_secret):
+                        raise ValueError("Expected Google Cloud OAuth JSON with an 'installed' or 'web' key.")
+                    with open(CLIENT_SECRET_FILE, "wb") as sf:
+                        sf.write(raw_bytes)
+                    st.session_state["last_secret_sha256"] = secret_hash
+                    _cached_yt_oauth.clear()
+                    st.success("Saved client_secret.json!")
+                    st.rerun()
+                except Exception as sec_err:
+                    st.error(f"Invalid Google OAuth JSON: {sec_err}")
 
     st.divider()
     st.subheader("📸 Instagram Reels Connection")
@@ -483,6 +499,11 @@ def get_existing_clips() -> List[Dict[str, Any]]:
         if not description:
             description = f"{title}\n\nEnjoy this high-retention gaming short! Like and subscribe for more daily viral clips.\n\n#Shorts #Gaming #Viral #Trending"
 
+        try:
+            safe_score = max(1, min(10, int(round(float(viral_score)))))
+        except (TypeError, ValueError):
+            safe_score = 8
+
         clips.append({
             "folder": folder,
             "folder_name": folder_name,
@@ -497,7 +518,7 @@ def get_existing_clips() -> List[Dict[str, Any]]:
             "caption": caption,
             "description": description,
             "tags": [str(t).lstrip("#") for t in tags] if isinstance(tags, list) else [],
-            "viral_score": viral_score,
+            "viral_score": safe_score,
             "trigger_type": trigger_type,
             "youtube_upload": youtube_upload,
             "instagram_upload": instagram_upload,
@@ -575,8 +596,9 @@ def pipeline_worker(target_urls: List[str], current_cfg: Dict[str, Any]):
 if clip_direct_btn:
     if not direct_url.strip():
         st.error("Please enter a valid YouTube video or stream URL.")
+    elif not runner.try_start(f"Direct Clipper initiated for: {direct_url.strip()}"):
+        st.warning("A pipeline run is already in progress.")
     else:
-        runner.reset_for_run(f"Direct Clipper initiated for: {direct_url.strip()}")
         cfg_snapshot = dict(st.session_state.config)
         t = threading.Thread(target=pipeline_worker, args=([direct_url.strip()], cfg_snapshot), daemon=True)
         t.start()
@@ -586,8 +608,9 @@ if 'start_multi_btn' in locals() and start_multi_btn:
     urls = [u.strip() for u in st.session_state.config.get("streamer_urls", "").splitlines() if u.strip()]
     if not urls:
         st.error("Please add at least one streamer URL.")
+    elif not runner.try_start(f"Multi-Channel Pipeline initiated with {len(urls)} channels..."):
+        st.warning("A pipeline run is already in progress.")
     else:
-        runner.reset_for_run(f"Multi-Channel Pipeline initiated with {len(urls)} channels...")
         cfg_snapshot = dict(st.session_state.config)
         t = threading.Thread(target=pipeline_worker, args=(urls, cfg_snapshot), daemon=True)
         t.start()

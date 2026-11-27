@@ -30,25 +30,27 @@ def _load_ids() -> Set[str]:
 
 def is_processed(video_id: str) -> bool:
     """Return True if video_id has already been recorded as processed."""
-    if not video_id:
+    vid = str(video_id or "").strip()
+    if not vid:
         return False
     with _LOCK:
-        return video_id in _load_ids()
+        return vid in _load_ids()
 
 
 def mark_processed(video_id: str, title: str = "") -> None:
     """Record video_id idempotently (avoids duplicate entries across reruns)."""
-    if not video_id:
+    vid = str(video_id or "").strip()
+    if not vid:
         return
     with _LOCK:
         try:
-            if video_id in _load_ids():
+            if vid in _load_ids():
                 return
             with open(TRACKER_FILE, "a", encoding="utf-8") as f:
                 safe_title = title.replace("\n", " ").replace("\r", " ").strip()
-                f.write(f"{video_id}\t{safe_title}\n")
+                f.write(f"{vid}\t{safe_title}\n")
         except Exception as e:
-            print(f"[Tracker] Error writing {video_id} to {TRACKER_FILE}: {e}")
+            print(f"[Tracker] Error writing {vid} to {TRACKER_FILE}: {e}")
 
 
 def get_all_processed() -> Set[str]:

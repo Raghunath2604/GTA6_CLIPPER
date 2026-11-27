@@ -69,3 +69,40 @@ def save_config(updates: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         print(f"[Config] Error writing {CONFIG_FILE}: {e}")
     return load_config()
+
+
+def update_env_file(env_path: str, updates: Dict[str, str], also_set_environ: bool = True) -> None:
+    """Safely update or append KEY=VALUE entries in a .env file without gluing lines."""
+    lines = []
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+    clean_updates = {str(k): str(v) for k, v in updates.items()}
+    new_lines = []
+    found_keys = set()
+    for line in lines:
+        matched = False
+        stripped = line.strip()
+        for k, v in clean_updates.items():
+            if stripped.startswith(f"{k}=") or stripped.startswith(f"# {k}="):
+                new_lines.append(f"{k}={v}\n")
+                found_keys.add(k)
+                if also_set_environ:
+                    os.environ[k] = v
+                matched = True
+                break
+        if not matched:
+            new_lines.append(line if line.endswith("\n") else f"{line}\n")
+
+    for k, v in clean_updates.items():
+        if k not in found_keys:
+            new_lines.append(f"{k}={v}\n")
+            if also_set_environ:
+                os.environ[k] = v
+
+    parent = os.path.dirname(os.path.abspath(env_path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)

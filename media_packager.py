@@ -18,7 +18,7 @@ from typing import Dict, Any, List, Optional
 def sanitize_filename(name: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9_\-]", "_", name)
     cleaned = re.sub(r"_+", "_", cleaned)
-    return cleaned[:50].strip("._")
+    return cleaned[:50].strip("._") or "Clip_Highlight"
 
 def extract_tags_from_clip_info(
     caption: str = "",

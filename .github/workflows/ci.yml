@@ -27,6 +27,6 @@ jobs:
         run: |
           python -m py_compile ai_clipper.py app.py canva_connector.py chat_analyzer.py config.py ffmpeg_utils.py instagram_uploader.py logger.py login_cli.py media_packager.py pipeline.py processed_tracker.py run_real_clip.py stream_manager.py subtitle_generator.py video_editor.py youtube_uploader.py tests/test_core.py
 
-      - name: Run unit tests
+      - name: Run pytest suite
         run: |
-          python -m unittest discover -s tests -v
+          python -m pytest -v
