@@ -9,11 +9,15 @@ Handles:
 """
 
 import os
+import time
 import shutil
 from typing import Optional
 from PIL import Image, ImageDraw, ImageFont
 
-from ffmpeg_utils import run_ffmpeg, get_ffmpeg_path
+from ffmpeg_utils import run_ffmpeg, detect_best_h264_encoder
+from logger import get_logger
+
+log = get_logger("video_editor")
 
 def create_hook_banner_overlay(
     text: str,
@@ -181,27 +185,34 @@ def render_viral_clip(
         except Exception as e:
             print(f"[Video Editor] Warning preparing subtitle file for burn: {e}")
 
+    t0 = time.time()
+    vcodec_args = detect_best_h264_encoder()
     filter_str = ";".join(filters)
-    render_args = [
-        "-threads", "0",
-        "-y",
-        *input_files,
-        "-filter_complex", filter_str,
-        "-map", current_v,
-        "-map", "0:a?",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-crf", "21",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-pix_fmt", "yuv420p",
-        "-movflags", "+faststart",
-        output_clip_path
-    ]
-    print(f"[Video Editor] Single-pass rendering 9:16 video ({duration_sec:.1f}s) from {start_sec:.1f}s...")
-    res = run_ffmpeg(render_args, timeout=600)
+
+    def _build_render_args(enc_args):
+        return [
+            "-threads", "0",
+            "-y",
+            *input_files,
+            "-filter_complex", filter_str,
+            "-map", current_v,
+            "-map", "0:a?",
+            *enc_args,
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            output_clip_path
+        ]
+
+    log.info(f"Single-pass rendering 9:16 video ({duration_sec:.1f}s) from {start_sec:.1f}s using {vcodec_args[1]}...")
+    res = run_ffmpeg(_build_render_args(vcodec_args), timeout=600)
+    if res.returncode != 0 and vcodec_args[1] != "libx264":
+        log.warning(f"GPU encoder {vcodec_args[1]} failed on filter chain; retrying with CPU libx264...")
+        res = run_ffmpeg(_build_render_args(["-c:v", "libx264", "-preset", "ultrafast", "-crf", "21"]), timeout=600)
+
     if res.returncode != 0:
-        print(f"[Video Editor] Filter complex failed ({res.stderr}). Retrying base 9:16 crop without overlays...")
+        log.warning(f"Overlay filter render failed ({res.stderr[-300:]}); falling back to clean 9:16 crop...")
         fallback_args = [
             "-threads", "0", "-y",
             "-ss", f"{start_sec:.3f}", "-t", f"{duration_sec:.3f}",
@@ -212,6 +223,8 @@ def render_viral_clip(
             output_clip_path
         ]
         run_ffmpeg(fallback_args, timeout=600)
+    else:
+        log.info(f"Rendered {os.path.basename(output_clip_path)} in {time.time() - t0:.1f}s")
 
     for tmp in [banner_png_path, temp_burn_ass]:
         if os.path.exists(tmp):

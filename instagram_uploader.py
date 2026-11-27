@@ -2,22 +2,27 @@
 Instagram Reels Uploader & Connection Manager (GTA6 Viral Clipper Pro).
 Supports two seamless integration pathways:
 1. Direct Account Connection (instagrapi):
-   - Logs in with Instagram username/password (or session file ig_session.json).
+   - Logs in with Instagram username/password (or session file ig_session.json) with 2FA support.
    - Direct local file .mp4 reel upload with caption and optional thumbnail.
 2. Official Meta Graph API (Content Publishing API):
    - Uses INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_ACCOUNT_ID.
-   - Supports Meta Resumable Upload protocol to push local video binaries directly to Meta servers.
+   - Streams local video binaries via Meta Resumable Upload protocol.
 """
 
 import os
 import time
-import json
 import requests
 from typing import Dict, Any, Optional
+
+from ffmpeg_utils import get_media_duration
+from logger import get_logger
+
+log = get_logger("instagram_uploader")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IG_SESSION_FILE = os.path.join(BASE_DIR, "ig_session.json")
 ENV_FILE = os.path.join(BASE_DIR, ".env")
+
 
 def get_instagram_config() -> Dict[str, str]:
     """Retrieves Instagram credentials from environment."""
@@ -28,6 +33,7 @@ def get_instagram_config() -> Dict[str, str]:
         "account_id": os.getenv("INSTAGRAM_ACCOUNT_ID", "").strip()
     }
 
+
 def is_instagram_connected() -> bool:
     """Checks whether either Direct Login or Meta Graph API is ready."""
     cfg = get_instagram_config()
@@ -35,6 +41,7 @@ def is_instagram_connected() -> bool:
     has_direct_creds = bool(cfg["username"] and cfg["password"])
     has_meta_creds = bool(cfg["access_token"] and cfg["account_id"])
     return has_session or has_direct_creds or has_meta_creds
+
 
 def get_instagram_status() -> Dict[str, Any]:
     """Returns the connection status and active method."""
@@ -70,8 +77,9 @@ def get_instagram_status() -> Dict[str, Any]:
             "connected": False,
             "method": "None",
             "account": "",
-            "status_text": "Not Connected (Add credentials in .env or below)"
+            "status_text": "Not Connected (Add credentials in .env or sidebar)"
         }
+
 
 def save_instagram_credentials(
     username: Optional[str] = None,
@@ -117,9 +125,19 @@ def save_instagram_credentials(
     with open(ENV_FILE, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
 
-# =====================================================================
-# METHOD 1: DIRECT ACCOUNT UPLOAD (INSTAGRAPI)
-# =====================================================================
+
+def _validate_reel_file(video_path: str) -> Optional[str]:
+    if not os.path.exists(video_path):
+        return f"Video file not found: {video_path}"
+    if os.path.getsize(video_path) < 1024:
+        return f"Video file is too small or corrupt: {video_path}"
+    dur = get_media_duration(video_path)
+    if dur > 0 and dur < 3.0:
+        return f"Instagram Reels must be at least 3 seconds long (got {dur:.1f}s)."
+    if dur > 90.0:
+        log.warning(f"Clip duration {dur:.1f}s exceeds standard 90s Reels length; Meta may trim or reject.")
+    return None
+
 
 def login_instagram_direct(
     username: str,
@@ -139,12 +157,13 @@ def login_instagram_direct(
                 pass
 
         if verification_code:
-            cl.login(username, password, verification_code=verification_code)
+            cl.login(username, password, verification_code=verification_code.strip())
         else:
             cl.login(username, password)
 
         cl.dump_settings(IG_SESSION_FILE)
         save_instagram_credentials(username=username, password=password)
+        log.info(f"Authenticated Instagram direct account @{username}")
 
         return {
             "status": "success",
@@ -156,14 +175,16 @@ def login_instagram_direct(
         if "two_factor_required" in err_msg.lower():
             return {
                 "status": "two_factor_required",
-                "message": "Two-factor authentication required. Please enter 2FA security code.",
+                "message": "Two-factor authentication required. Please enter your 2FA security code.",
                 "error": err_msg
             }
+        log.warning(f"Instagram login failed: {err_msg}")
         return {
             "status": "error",
             "message": f"Instagram login failed: {err_msg}",
             "error": err_msg
         }
+
 
 def upload_reel_direct(
     video_path: str,
@@ -171,8 +192,9 @@ def upload_reel_direct(
     thumbnail_path: Optional[str] = None
 ) -> Dict[str, Any]:
     """Uploads a vertical clip directly to Instagram Reels using instagrapi."""
-    if not os.path.exists(video_path):
-        return {"status": "error", "error": f"Video file not found: {video_path}"}
+    err = _validate_reel_file(video_path)
+    if err:
+        return {"status": "error", "method": "direct", "error": err}
 
     cfg = get_instagram_config()
     username = cfg["username"]
@@ -187,7 +209,7 @@ def upload_reel_direct(
         if os.path.exists(IG_SESSION_FILE):
             try:
                 cl.load_settings(IG_SESSION_FILE)
-                cl.get_timeline_feed()  # Verify session validity
+                cl.get_timeline_feed()
                 logged_in = True
             except Exception:
                 logged_in = False
@@ -200,19 +222,20 @@ def upload_reel_direct(
         if not logged_in:
             return {
                 "status": "error",
+                "method": "direct",
                 "error": "Instagram session expired or missing credentials. Please log in first."
             }
 
-        print(f"[Instagram Uploader] Uploading reel '{os.path.basename(video_path)}' directly...")
+        log.info(f"Uploading reel '{os.path.basename(video_path)}' via direct account...")
         media = cl.clip_upload(
             path=video_path,
-            caption=caption[:2200],
+            caption=(caption or "")[:2200],
             thumbnail=thumbnail_path if (thumbnail_path and os.path.exists(thumbnail_path)) else None
         )
 
         code = media.code
         reel_url = f"https://www.instagram.com/reel/{code}/"
-        print(f"[Instagram Uploader] Direct upload complete! Reel URL: {reel_url}")
+        log.info(f"Instagram direct upload complete! Reel URL: {reel_url}")
 
         return {
             "status": "success",
@@ -223,11 +246,9 @@ def upload_reel_direct(
             "caption": caption
         }
     except Exception as e:
+        log.warning(f"Instagram direct upload failed: {e}")
         return {"status": "error", "method": "direct", "error": str(e)}
 
-# =====================================================================
-# METHOD 2: OFFICIAL META GRAPH API (CONTENT PUBLISHING)
-# =====================================================================
 
 def upload_reel_meta_graph(
     video_url_or_path: str,
@@ -249,16 +270,19 @@ def upload_reel_meta_graph(
     api_version = "v19.0"
     base_url = f"https://graph.facebook.com/{api_version}"
     init_url = f"{base_url}/{act_id}/media"
-
     is_local_file = os.path.exists(video_url_or_path)
 
     if is_local_file:
+        val_err = _validate_reel_file(video_url_or_path)
+        if val_err:
+            return {"status": "error", "error": val_err}
+
         file_size = os.path.getsize(video_url_or_path)
         init_payload = {
             "access_token": token,
             "media_type": "REELS",
             "upload_type": "resumable",
-            "caption": caption[:2200],
+            "caption": (caption or "")[:2200],
             "share_to_feed": "true"
         }
         try:
@@ -270,18 +294,16 @@ def upload_reel_meta_graph(
             container_id = init_res["id"]
             upload_uri = init_res["uri"]
 
-            with open(video_url_or_path, "rb") as vf:
-                video_bytes = vf.read()
-
             upload_headers = {
                 "Authorization": f"OAuth {token}",
                 "offset": "0",
                 "file_size": str(file_size),
                 "Content-Type": "application/octet-stream"
             }
-            rupload_res = requests.post(upload_uri, headers=upload_headers, data=video_bytes, timeout=180)
+            with open(video_url_or_path, "rb") as vf:
+                rupload_res = requests.post(upload_uri, headers=upload_headers, data=vf, timeout=180)
             if rupload_res.status_code not in (200, 201):
-                return {"status": "error", "error": f"Binary upload to rupload failed: {rupload_res.text}"}
+                return {"status": "error", "error": f"Binary upload to rupload failed ({rupload_res.status_code}): {rupload_res.text}"}
 
         except Exception as e:
             return {"status": "error", "error": f"Meta Resumable Upload error: {e}"}
@@ -289,7 +311,7 @@ def upload_reel_meta_graph(
         init_payload = {
             "access_token": token,
             "media_type": "REELS",
-            "caption": caption[:2200],
+            "caption": (caption or "")[:2200],
             "share_to_feed": "true",
             "video_url": video_url_or_path
         }
@@ -301,21 +323,29 @@ def upload_reel_meta_graph(
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    # Poll container status until FINISHED
     status_url = f"{base_url}/{container_id}"
+    finished = False
     for _ in range(40):
         time.sleep(5)
         try:
-            s_res = requests.get(status_url, params={"access_token": token, "fields": "status_code"}, timeout=15).json()
+            s_res = requests.get(
+                status_url,
+                params={"access_token": token, "fields": "status_code,status"},
+                timeout=15
+            ).json()
             code = s_res.get("status_code")
             if code == "FINISHED":
+                finished = True
                 break
             elif code == "ERROR":
-                return {"status": "error", "error": "Meta video transcoding failed on Instagram servers."}
+                detail = s_res.get("status") or "Meta video transcoding failed on Instagram servers."
+                return {"status": "error", "error": detail}
         except Exception:
             pass
 
-    # Publish container
+    if not finished:
+        return {"status": "error", "error": "Timed out waiting for Instagram container processing."}
+
     try:
         pub_url = f"{base_url}/{act_id}/media_publish"
         pub_res = requests.post(pub_url, data={"access_token": token, "creation_id": container_id}, timeout=30).json()
@@ -327,14 +357,10 @@ def upload_reel_meta_graph(
                 "media_id": media_id,
                 "url": f"https://www.instagram.com/p/{media_id}/"
             }
-        else:
-            return {"status": "error", "error": pub_res.get("error", {}).get("message", "Publish failed")}
+        return {"status": "error", "error": pub_res.get("error", {}).get("message", "Publish failed")}
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
-# =====================================================================
-# UNIFIED ENTRYPOINT
-# =====================================================================
 
 def upload_reel_to_instagram(
     video_url_or_path: str,
@@ -344,16 +370,15 @@ def upload_reel_to_instagram(
     account_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """Automatically selects the best active method (Direct Account or Meta Graph) and publishes the Reel."""
-    status = get_instagram_status()
     cfg = get_instagram_config()
 
-    # If Direct Account session or credentials exist, use instagrapi for 1-click posting
     if os.path.exists(IG_SESSION_FILE) or (cfg["username"] and cfg["password"]):
         res = upload_reel_direct(video_url_or_path, caption, thumbnail_path=thumbnail_path)
         if res.get("status") == "success":
             return res
+        if not ((access_token or cfg["access_token"]) and (account_id or cfg["account_id"])):
+            return res
 
-    # Otherwise, fallback or use Meta Graph API
     if (access_token or cfg["access_token"]) and (account_id or cfg["account_id"]):
         return upload_reel_meta_graph(video_url_or_path, caption, access_token=access_token, account_id=account_id)
 

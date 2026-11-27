@@ -13,12 +13,14 @@ Supports:
 import os
 import glob
 import json
+import shutil
 import threading
 import subprocess
 import streamlit as st
 from typing import Dict, Any, List
 
 import config as cfg_module
+from ffmpeg_utils import check_ffmpeg_health, detect_best_h264_encoder
 from processed_tracker import is_processed, mark_processed, get_all_processed, TRACKER_FILE
 from stream_manager import get_channel_latest_stream_info, is_direct_video_url
 from pipeline import run_parallel_clipper, ChannelTaskState, process_single_streamer
@@ -213,6 +215,20 @@ with st.sidebar:
         })
 
     st.divider()
+    st.subheader("🩺 System Health")
+    @st.cache_data(ttl=60)
+    def _cached_system_health():
+        ff = check_ffmpeg_health()
+        enc = detect_best_h264_encoder()
+        return {"ffmpeg_ready": ff["ready"], "encoder": enc[1] if len(enc) > 1 else "libx264"}
+
+    health = _cached_system_health()
+    if health["ffmpeg_ready"]:
+        st.success(f"FFmpeg Ready • Encoder: `{health['encoder']}`")
+    else:
+        st.error("FFmpeg not found! Run `winget install Gyan.FFmpeg`.")
+
+    st.divider()
     st.subheader("🔴 YouTube Shorts OAuth")
     oauth_info = get_oauth_status()
     if oauth_info["has_token"]:
@@ -234,13 +250,16 @@ with st.sidebar:
             with tab_direct:
                 ig_user = st.text_input("Instagram Username", key="sb_ig_user")
                 ig_pass = st.text_input("Instagram Password", type="password", key="sb_ig_pass")
+                ig_2fa = st.text_input("2FA Code (only if enabled)", key="sb_ig_2fa")
                 if st.button("Log In to Instagram", key="sb_ig_login_btn"):
                     if ig_user and ig_pass:
                         with st.spinner("Authenticating with Instagram..."):
-                            res = login_instagram_direct(ig_user, ig_pass)
+                            res = login_instagram_direct(ig_user, ig_pass, verification_code=ig_2fa or None)
                             if res.get("status") == "success":
                                 st.success(res.get("message"))
                                 st.rerun()
+                            elif res.get("status") == "two_factor_required":
+                                st.warning(res.get("message"))
                             else:
                                 st.error(res.get("message"))
                     else:
@@ -567,10 +586,25 @@ else:
 
             with btn_col4:
                 if st.button("💾 Save", key=f"save_{folder_id}", width="stretch"):
-                    if clip["seo_file"] and os.path.exists(clip["seo_file"]):
-                        try:
-                            with open(clip["seo_file"], "w", encoding="utf-8") as f:
-                                f.write(f"""==================================================
+                    try:
+                        meta_path = os.path.join(clip["folder"], "metadata.json")
+                        if os.path.exists(meta_path):
+                            with open(meta_path, "r", encoding="utf-8") as mf:
+                                meta_obj = json.load(mf)
+                        else:
+                            meta_obj = {}
+                        meta_obj.update({
+                            "title": edit_title,
+                            "caption": edit_caption,
+                            "description": edit_desc,
+                            "seo_description": edit_desc,
+                        })
+                        with open(meta_path, "w", encoding="utf-8") as mf:
+                            json.dump(meta_obj, mf, indent=2)
+
+                        seo_target = clip["seo_file"] or os.path.join(clip["folder"], "SEO_metadata.txt")
+                        with open(seo_target, "w", encoding="utf-8") as f:
+                            f.write(f"""==================================================
 GTA6 VIRAL CLIPPER PRO - SEO & PUBLISHING METADATA
 ==================================================
 
@@ -595,9 +629,9 @@ Source Stream ID      : {clip['folder_name'].split('_Clip')[0]}
 1. thumbnail_clean.jpg  -> Clean gameplay frame for Canva Pro Brand Templates
 2. thumbnail.jpg        -> Ready-to-post thumbnail with hook banner
 """)
-                            st.toast("Saved metadata changes to SEO_metadata.txt!", icon="💾")
-                        except Exception as save_err:
-                            st.error(f"Save error: {save_err}")
+                        st.toast("Saved changes to metadata.json and SEO_metadata.txt!", icon="💾")
+                    except Exception as save_err:
+                        st.error(f"Save error: {save_err}")
 
             if folder_id in st.session_state.upload_status:
                 up_res = st.session_state.upload_status[folder_id]

@@ -3,11 +3,19 @@ import tempfile
 import unittest
 
 import config
+import processed_tracker
+from ai_clipper import ViralClip, sanitize_clips
 from chat_analyzer import analyze_chat_explosions, calculate_top_hotspots
+from ffmpeg_utils import check_ffmpeg_health
 from media_packager import sanitize_filename, package_clip
 from stream_manager import is_direct_video_url
-from subtitle_generator import _format_srt_timestamp
+from subtitle_generator import (
+    _format_srt_timestamp,
+    split_segment_proportionally,
+    split_words_into_short_cues,
+)
 from video_editor import _srt_ts_to_ass, _convert_srt_to_vertical_ass
+from youtube_uploader import sanitize_youtube_tags
 
 
 class CorePipelineTests(unittest.TestCase):
@@ -83,6 +91,57 @@ class CorePipelineTests(unittest.TestCase):
             finally:
                 config.CONFIG_FILE = orig_file
                 config.DEFAULT_CONFIG.update(orig_default)
+
+    def test_sanitize_clips_clamps_bounds_and_drops_overlaps(self):
+        raw = [
+            ViralClip(start_seconds=-5.0, end_seconds=20.0, viral_score=9, trigger_type="CHAT", hook_banner="one two three four five six seven", title="T1", caption="C1", description="D1"),
+            ViralClip(start_seconds=3.0, end_seconds=38.0, viral_score=8, trigger_type="CHAT", hook_banner="overlap clip", title="T2", caption="C2", description="D2"),
+            ViralClip(start_seconds=90.0, end_seconds=125.0, viral_score=7, trigger_type="CHAT", hook_banner="valid second clip", title="T3", caption="C3", description="D3"),
+        ]
+        cleaned = sanitize_clips(raw, video_duration=100.0, target_duration=35.0, max_clips=3)
+        self.assertEqual(len(cleaned), 2)
+        self.assertEqual(cleaned[0].start_seconds, 0.0)
+        self.assertEqual(cleaned[0].end_seconds, 35.0)
+        self.assertEqual(len(cleaned[0].hook_banner.split()), 6)
+        self.assertEqual(cleaned[1].start_seconds, 65.0)
+        self.assertEqual(cleaned[1].end_seconds, 100.0)
+
+    def test_subtitle_word_and_segment_chunking(self):
+        words = [(i * 0.4, (i + 1) * 0.4, w) for i, w in enumerate(["this", "is", "insane", "chat", "look", "at", "that", "car"])]
+        cues = split_words_into_short_cues(words, max_words=5, max_cue_sec=2.4)
+        self.assertEqual(len(cues), 2)
+        self.assertEqual(cues[0][3], "THIS IS INSANE CHAT LOOK")
+        self.assertEqual(cues[1][3], "AT THAT CAR")
+
+        segs = split_segment_proportionally(0.0, 6.0, "one two three four five six seven", max_words=4)
+        self.assertEqual(len(segs), 2)
+        self.assertEqual(segs[0][2], "ONE TWO THREE FOUR")
+
+    def test_sanitize_youtube_tags_budget_and_dedupe(self):
+        tags = ["#GTA6", "gta6", "<bad>", "x" * 40] + [f"customtag_{i}" for i in range(40)]
+        cleaned = sanitize_youtube_tags(tags, max_total_chars=120)
+        self.assertIn("GTA6", cleaned)
+        self.assertEqual(len([t for t in cleaned if t.lower() == "gta6"]), 1)
+        self.assertTrue(all(len(t) <= 30 and "<" not in t and "#" not in t for t in cleaned))
+
+    def test_processed_tracker_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as td:
+            orig_tracker = processed_tracker.TRACKER_FILE
+            try:
+                processed_tracker.TRACKER_FILE = os.path.join(td, "processed.txt")
+                processed_tracker.mark_processed("vidA", "Stream One")
+                processed_tracker.mark_processed("vidA", "Stream One Duplicate")
+                with open(processed_tracker.TRACKER_FILE, encoding="utf-8") as f:
+                    lines = [ln for ln in f.read().splitlines() if ln.strip()]
+                self.assertEqual(len(lines), 1)
+                self.assertTrue(processed_tracker.is_processed("vidA"))
+            finally:
+                processed_tracker.TRACKER_FILE = orig_tracker
+
+    def test_ffmpeg_health_shape(self):
+        h = check_ffmpeg_health()
+        self.assertIn("ready", h)
+        self.assertIn("ffmpeg_path", h)
 
 
 if __name__ == "__main__":

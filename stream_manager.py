@@ -8,20 +8,50 @@ Handles:
 """
 
 import os
-import re
 import time
-import subprocess
-from typing import Dict, Any, Optional, Tuple, List
+import shutil
+from typing import Dict, Any, Optional, Tuple
 import yt_dlp
+from yt_dlp.utils import download_range_func
 
-from processed_tracker import is_processed
-from ffmpeg_utils import run_ffmpeg, get_ffmpeg_path
+from ffmpeg_utils import run_ffmpeg, get_ffmpeg_path, get_media_duration
+from logger import get_logger
 
-# Ensure Gyan.FFmpeg bin directory is in PATH for yt-dlp and sub-processes
+log = get_logger("stream_manager")
+
+# Ensure FFmpeg bin directory is in PATH for yt-dlp and sub-processes
 _ffmpeg_bin_dir = os.path.dirname(get_ffmpeg_path())
 if _ffmpeg_bin_dir and os.path.exists(_ffmpeg_bin_dir):
     if _ffmpeg_bin_dir not in os.environ.get("PATH", ""):
         os.environ["PATH"] = _ffmpeg_bin_dir + os.pathsep + os.environ.get("PATH", "")
+
+
+def _detect_js_runtimes() -> Dict[str, Dict[str, str]]:
+    """Detect available JS runtime (deno/node) so yt-dlp solves YouTube EJS challenges."""
+    runtimes: Dict[str, Dict[str, str]] = {}
+    deno = shutil.which("deno")
+    if deno:
+        runtimes["deno"] = {"path": deno}
+    node = shutil.which("node")
+    if node:
+        runtimes["node"] = {"path": node}
+    return runtimes
+
+
+def _base_ydl_opts(**extra: Any) -> Dict[str, Any]:
+    opts: Dict[str, Any] = {
+        "ffmpeg_location": _ffmpeg_bin_dir,
+        "quiet": True,
+        "no_warnings": True,
+        "retries": 3,
+        "fragment_retries": 3,
+        "socket_timeout": 20,
+    }
+    js_rt = _detect_js_runtimes()
+    if js_rt:
+        opts["js_runtimes"] = js_rt
+    opts.update(extra)
+    return opts
 
 def is_direct_video_url(url: str) -> bool:
     """Checks if a URL points directly to a single video/stream rather than a channel."""
@@ -35,12 +65,7 @@ def get_channel_latest_stream_info(input_url: str) -> Optional[Dict[str, Any]]:
 
     # Case A: Direct YouTube Video / Live Stream Link
     if is_direct_video_url(clean_url):
-        ydl_opts = {
-            "ffmpeg_location": _ffmpeg_bin_dir,
-            "quiet": True,
-            "no_warnings": True,
-            "ignoreerrors": True,
-        }
+        ydl_opts = _base_ydl_opts(ignoreerrors=True)
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(clean_url, download=False)
@@ -60,7 +85,7 @@ def get_channel_latest_stream_info(input_url: str) -> Optional[Dict[str, Any]]:
                     "is_direct_video": True
                 }
         except Exception as e:
-            print(f"[Stream Manager] Error extracting direct video {clean_url}: {e}")
+            log.warning(f"Error extracting direct video {clean_url}: {e}")
             return None
 
     # Case B: Channel Streams or Videos Tabs
@@ -73,14 +98,7 @@ def get_channel_latest_stream_info(input_url: str) -> Optional[Dict[str, Any]]:
                 clean_url.rstrip("/")
             ]
 
-    ydl_opts = {
-        "ffmpeg_location": _ffmpeg_bin_dir,
-        "extract_flat": True,
-        "playlistend": 3,
-        "quiet": True,
-        "no_warnings": True,
-        "ignoreerrors": True,
-    }
+    ydl_opts = _base_ydl_opts(extract_flat=True, playlistend=3, ignoreerrors=True)
 
     for channel_url in candidate_urls:
         try:
@@ -146,18 +164,13 @@ def download_stream_or_buffer(
 
     if is_live:
         if live_mode == "skip_active":
-            print(f"[Stream Manager] Stream {vid_id} is actively live. Config set to 'skip_active'. Skipping.")
+            log.info(f"Stream {vid_id} is actively live. Config set to 'skip_active'. Skipping.")
             return None, None, 0.0
 
         buffer_sec = max(60, max_duration_minutes * 60)
-        print(f"[Stream Manager] Stream {vid_id} is live! Recording a {max_duration_minutes}-minute timed buffer...")
+        log.info(f"Stream {vid_id} is live; recording {max_duration_minutes}m ({buffer_sec}s) buffer...")
         
-        ydl_opts = {
-            "ffmpeg_location": _ffmpeg_bin_dir,
-            "format": "bestvideo[height<=720]+bestaudio/best[height<=720]/best",
-            "quiet": True,
-            "no_warnings": True
-        }
+        ydl_opts = _base_ydl_opts(format="bestvideo[height<=720]+bestaudio/best[height<=720]/best")
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(watch_url, download=False) or {}
@@ -219,36 +232,44 @@ def download_stream_or_buffer(
                 ffmpeg_args = None
 
             if ffmpeg_args:
-                print(f"[Stream Manager] Capturing live stream buffer via FFmpeg ({buffer_sec}s, muxed_audio={bool(audio_m3u8)})...")
+                log.info(f"Capturing live stream buffer via FFmpeg ({buffer_sec}s, muxed_audio={bool(audio_m3u8)})...")
                 res = run_ffmpeg(ffmpeg_args, timeout=buffer_sec + 60)
                 if res.returncode == 0 and os.path.exists(video_output_path):
-                    from ffmpeg_utils import get_media_duration
                     dur = get_media_duration(video_output_path)
-                    print(f"[Stream Manager] Successfully captured live buffer ({dur:.1f}s).")
+                    log.info(f"Captured live buffer ({dur:.1f}s).")
                     return video_output_path, None, dur
         except Exception as e:
-            print(f"[Stream Manager] Error during live buffer recording: {e}")
+            log.warning(f"Error during live buffer recording: {e}")
 
-    print(f"[Stream Manager] Fast downloading 720p video for stream {vid_id}...")
-    max_sec = max_duration_minutes * 60
+    max_sec = max(60, max_duration_minutes * 60)
+    log.info(f"Downloading 720p VOD window (up to {max_duration_minutes}m) for stream {vid_id}...")
 
-    ydl_opts = {
-        "ffmpeg_location": _ffmpeg_bin_dir,
-        "format": "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best",
-        "outtmpl": os.path.join(work_dir, f"temp_stream_{vid_id}.%(ext)s"),
-        "merge_output_format": "mp4",
-        "writesubtitles": True,
-        "writeautomaticsub": False,
-        "subtitleslangs": ["live_chat"],
-        "quiet": False,
-        "no_warnings": True,
-    }
+    ydl_opts = _base_ydl_opts(
+        format="bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best",
+        outtmpl=os.path.join(work_dir, f"temp_stream_{vid_id}.%(ext)s"),
+        merge_output_format="mp4",
+        download_ranges=download_range_func(None, [(0, max_sec)]),
+        force_keyframes_at_cuts=True,
+        writesubtitles=True,
+        writeautomaticsub=False,
+        subtitleslangs=["live_chat"],
+        quiet=False,
+    )
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([watch_url])
     except Exception as e:
-        print(f"[Stream Manager] Download notice: {e}")
+        log.warning(f"Section download notice ({e}); checking if partial or fallback download needed...")
+        if not any(os.path.exists(os.path.join(work_dir, f"temp_stream_{vid_id}.{ext}")) for ext in ["mp4", "mkv", "webm"]):
+            fallback_opts = dict(ydl_opts)
+            fallback_opts.pop("download_ranges", None)
+            fallback_opts.pop("force_keyframes_at_cuts", None)
+            try:
+                with yt_dlp.YoutubeDL(fallback_opts) as ydl:
+                    ydl.download([watch_url])
+            except Exception as fb_err:
+                log.warning(f"Fallback download notice: {fb_err}")
 
     actual_video_path = None
     for ext in ["mp4", "mkv", "webm"]:

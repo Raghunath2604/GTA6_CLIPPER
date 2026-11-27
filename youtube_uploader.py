@@ -1,19 +1,25 @@
 """
 YouTube Shorts 1-Click Uploader (OAuth 2.0 via Google API Python Client).
-Uploads generated clips as Private Drafts with #Shorts and Gaming category.
-Automatically detects client_secret.json or any Google Cloud downloaded secret JSON file.
+Uploads generated clips as Private Drafts with #Shorts, Gaming category,
+YouTube tag budget enforcement, and resumable chunk retries.
 """
 
 import os
+import re
 import glob
-import json
+import time
 import shutil
 from typing import Dict, Any, List, Optional
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
+
+from logger import get_logger
+
+log = get_logger("youtube_uploader")
 
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
@@ -24,6 +30,37 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CLIENT_SECRET_FILE = os.path.join(BASE_DIR, "client_secret.json")
 TOKEN_FILE = os.path.join(BASE_DIR, "token.json")
 
+
+def sanitize_youtube_tags(
+    tags: Optional[List[str]] = None,
+    default_tags: Optional[List[str]] = None,
+    max_total_chars: int = 460
+) -> List[str]:
+    """Strip invalid characters, deduplicate, and enforce YouTube's 500-char tag budget."""
+    defaults = default_tags or ["Shorts", "Gaming", "GamingClips", "LiveStream", "FunnyMoments", "Viral"]
+    combined = list(tags or []) + list(defaults)
+
+    seen = set()
+    cleaned: List[str] = []
+    used_chars = 0
+
+    for raw in combined:
+        tag = re.sub(r"[<>\"#]", "", str(raw or "")).strip()[:30]
+        if not tag:
+            continue
+        key = tag.lower()
+        if key in seen:
+            continue
+        extra_len = len(tag) + (len(tag.split()) > 1) * 2 + (1 if cleaned else 0)
+        if used_chars + extra_len > max_total_chars:
+            continue
+        seen.add(key)
+        cleaned.append(tag)
+        used_chars += extra_len
+
+    return cleaned
+
+
 def find_client_secret_file() -> Optional[str]:
     """
     Finds client_secret.json or any downloaded Google Cloud OAuth JSON file
@@ -32,7 +69,6 @@ def find_client_secret_file() -> Optional[str]:
     if os.path.exists(CLIENT_SECRET_FILE) and os.path.getsize(CLIENT_SECRET_FILE) > 10:
         return CLIENT_SECRET_FILE
 
-    # Search for any downloaded secret JSON files
     patterns = [
         os.path.join(BASE_DIR, "*client_secret*.json"),
         os.path.join(BASE_DIR, "client_secrets*.json"),
@@ -47,30 +83,32 @@ def find_client_secret_file() -> Optional[str]:
     if candidates:
         chosen = candidates[0]
         try:
-            # Copy to standard client_secret.json
             shutil.copyfile(chosen, CLIENT_SECRET_FILE)
-            print(f"[YouTube Uploader] Auto-detected '{os.path.basename(chosen)}' -> linked as 'client_secret.json'")
+            log.info(f"Auto-detected '{os.path.basename(chosen)}' -> linked as 'client_secret.json'")
             return CLIENT_SECRET_FILE
         except Exception as e:
-            print(f"[YouTube Uploader] Warning linking client secret: {e}")
+            log.warning(f"Could not link client secret: {e}")
             return chosen
 
     return None
+
 
 def is_client_secret_present() -> bool:
     """Checks if client_secret.json or any valid secret file exists."""
     return find_client_secret_file() is not None
 
+
 def is_token_present() -> bool:
     """Checks if token.json exists and has valid credentials."""
     return os.path.exists(TOKEN_FILE) and os.path.getsize(TOKEN_FILE) > 10
+
 
 def get_oauth_status() -> Dict[str, Any]:
     """Returns the current YouTube OAuth configuration status."""
     has_secret = is_client_secret_present()
     has_token = is_token_present()
     status_msg = "Not Configured (Missing client_secret.json)"
-    
+
     if has_secret and not has_token:
         secret_path = find_client_secret_file()
         fname = os.path.basename(secret_path) if secret_path else "client_secret.json"
@@ -84,6 +122,7 @@ def get_oauth_status() -> Dict[str, Any]:
         "status_text": status_msg
     }
 
+
 def get_authenticated_service():
     """Authenticates using client_secret.json and token.json."""
     creds = None
@@ -91,14 +130,14 @@ def get_authenticated_service():
         try:
             creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
         except Exception as e:
-            print(f"[YouTube Uploader] Error reading {TOKEN_FILE}: {e}")
+            log.warning(f"Error reading {TOKEN_FILE}: {e}")
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
             except Exception as e:
-                print(f"[YouTube Uploader] Refresh error: {e}")
+                log.warning(f"OAuth token refresh error: {e}")
                 creds = None
 
         if not creds:
@@ -116,6 +155,7 @@ def get_authenticated_service():
 
     return build("youtube", "v3", credentials=creds)
 
+
 def upload_short_to_youtube(
     video_path: str,
     title: str,
@@ -126,31 +166,29 @@ def upload_short_to_youtube(
 ) -> Dict[str, Any]:
     """
     Uploads 9:16 video to YouTube Shorts:
-    - Appends #Shorts to title
-    - Category ID 20 (Gaming)
-    - Privacy: private (Draft)
-    - MadeForKids: False
+    - Appends #Shorts to title (enforcing 100-char limit)
+    - Category ID 20 (Gaming), tags within YouTube's 500-char limit
+    - Resumable upload with transient 5xx/network chunk retry
     """
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video file not found: {video_path}")
 
-    # Ensure #Shorts is in title
-    clean_title = title.strip()
-    if "#Shorts" not in clean_title and "#shorts" not in clean_title:
-        clean_title = f"{clean_title} #Shorts"
+    clean_title = (title or "Gaming Highlight").strip()
+    if "#shorts" not in clean_title.lower():
+        clean_title = f"{clean_title[:92].rstrip()} #Shorts"
     clean_title = clean_title[:100]
 
-    default_tags = ["Shorts", "Gaming", "GamingClips", "LiveStream", "FunnyMoments", "Viral"]
-    merged_tags = list(dict.fromkeys((tags or []) + default_tags))
+    clean_desc = (description or clean_title).strip()[:5000]
+    merged_tags = sanitize_youtube_tags(tags)
 
     youtube = get_authenticated_service()
 
     body = {
         "snippet": {
             "title": clean_title,
-            "description": description,
+            "description": clean_desc,
             "tags": merged_tags,
-            "categoryId": "20"  # Gaming category
+            "categoryId": "20"
         },
         "status": {
             "privacyStatus": privacy_status,
@@ -165,7 +203,7 @@ def upload_short_to_youtube(
         chunksize=1024 * 1024 * 4
     )
 
-    print(f"[YouTube Uploader] Uploading '{clean_title}' to YouTube Shorts as {privacy_status} draft...")
+    log.info(f"Uploading '{clean_title}' to YouTube Shorts as {privacy_status}...")
     request = youtube.videos().insert(
         part="snippet,status",
         body=body,
@@ -173,15 +211,30 @@ def upload_short_to_youtube(
     )
 
     response = None
+    retry_count = 0
     while response is None:
-        status, response = request.next_chunk()
-        if status:
-            progress = int(status.progress() * 100)
-            print(f"[YouTube Uploader] Upload progress: {progress}%")
+        try:
+            status, response = request.next_chunk()
+            retry_count = 0
+            if status:
+                log.info(f"YouTube upload progress: {int(status.progress() * 100)}%")
+        except HttpError as http_err:
+            if http_err.resp.status in (500, 502, 503, 504) and retry_count < 3:
+                retry_count += 1
+                time.sleep(2 ** retry_count)
+                continue
+            raise
+        except (OSError, TimeoutError) as net_err:
+            if retry_count < 3:
+                retry_count += 1
+                log.warning(f"Transient network error during chunk upload ({net_err}); retrying ({retry_count}/3)...")
+                time.sleep(2 ** retry_count)
+                continue
+            raise
 
     video_id = response.get("id")
     shorts_url = f"https://www.youtube.com/shorts/{video_id}"
-    print(f"[YouTube Uploader] Upload complete! Video ID: {video_id} -> {shorts_url}")
+    log.info(f"YouTube upload complete! Video ID: {video_id} -> {shorts_url}")
 
     thumb_set = False
     if thumbnail_path and os.path.exists(thumbnail_path):
@@ -190,7 +243,7 @@ def upload_short_to_youtube(
             youtube.thumbnails().set(videoId=video_id, media_body=thumb_media).execute()
             thumb_set = True
         except Exception as thumb_err:
-            print(f"[YouTube Uploader] Custom thumbnail warning: {thumb_err}")
+            log.warning(f"Custom thumbnail warning: {thumb_err}")
 
     return {
         "status": "success",

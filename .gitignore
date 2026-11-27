@@ -8,6 +8,8 @@ canva_token.json
 ig_session.json
 config.json
 processed_videos.txt
+logs/
+_tmp/
 
 # Generated Media, Buffers & Temp Assets
 Output_Clips/

@@ -131,8 +131,9 @@ GTA6_CLIPPER/
 ├── login_cli.py               # Unified OAuth & account login CLI
 ├── run_real_clip.py           # CLI pipeline runner for single URLs
 ├── config.py                  # Config priority manager (config.json > .env > defaults)
-├── ffmpeg_utils.py            # Cross-path FFmpeg/FFprobe discovery on Windows
-├── processed_tracker.py       # Thread-safe processed video deduplication
+├── ffmpeg_utils.py            # Cross-path FFmpeg/FFprobe & GPU encoder auto-detection
+├── logger.py                  # Thread-safe rotating file & console logger (logs/clipper.log)
+├── processed_tracker.py       # Idempotent thread-safe video deduplication registry
 ├── tests/test_core.py         # Automated unit tests
 ├── .github/workflows/ci.yml   # GitHub Actions CI verification
 ├── .env.example               # Environment configuration template
