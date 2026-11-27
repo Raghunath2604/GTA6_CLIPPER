@@ -157,11 +157,55 @@ def test_instagram_meta_graph_aborts_immediately_on_status_error(monkeypatch):
     assert len(sleep_calls) == 1
 
 
-def test_streamlit_dashboard_apptest_smoke():
+def test_streamlit_dashboard_apptest_smoke(tmp_path, monkeypatch):
     from streamlit.testing.v1 import AppTest
+
+    out_dir = tmp_path / "Output_Clips"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    missing_cfg = tmp_path / "missing_config.json"
+
+    monkeypatch.setattr(config, "CONFIG_FILE", str(missing_cfg))
+    monkeypatch.setitem(config.DEFAULT_CONFIG, "output_dir", str(out_dir))
+    monkeypatch.setitem(config.DEFAULT_CONFIG, "gemini_api_key", "")
+
+    # 1. Verify empty-gallery CI state renders cleanly with zero exceptions
+    at_empty = AppTest.from_file("app.py", default_timeout=45).run()
+    assert not list(at_empty.exception)
+    assert not list(at_empty.error)
+    assert any("No clips generated yet" in m.value for m in at_empty.info)
+
+    # 2. Verify populated gallery metrics, sort, and search filters work hermetically
+    dummy_mp4 = tmp_path / "sample.mp4"
+    dummy_jpg = tmp_path / "sample.jpg"
+    dummy_srt = tmp_path / "sample.srt"
+    dummy_mp4.write_bytes(b"0" * 2048)
+    Image.new("RGB", (180, 320), (20, 20, 40)).save(dummy_jpg)
+    dummy_srt.write_text("1\n00:00:00,000 --> 00:00:02,000\nHELLO\n", encoding="utf-8")
+
+    media_packager.package_clip(
+        output_base_dir=str(out_dir),
+        vid_id="ciVid1",
+        clip_index=1,
+        clip_info={
+            "title": "Vice City Stunt",
+            "hook_banner": "INSANE JUMP",
+            "caption": "Watch #GTA6 #Shorts",
+            "description": "Highlight #Gaming",
+            "viral_score": 9,
+            "trigger_type": "CLUTCH",
+        },
+        rendered_mp4_path=str(dummy_mp4),
+        clean_thumb_path=str(dummy_jpg),
+        post_thumb_path=str(dummy_jpg),
+        srt_path=str(dummy_srt),
+    )
 
     at = AppTest.from_file("app.py", default_timeout=45).run()
     assert not list(at.exception)
     assert not list(at.error)
+    assert len(at.metric) == 4
     at.selectbox(key="gallery_sort").select("Unposted First").run()
     assert not list(at.exception)
+    at.text_input(key="gallery_filter").input("nonexistent_clip_xyz").run()
+    assert not list(at.exception)
+    assert any("No clips match" in m.value for m in at.info)
