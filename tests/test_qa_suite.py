@@ -158,8 +158,10 @@ def test_instagram_meta_graph_aborts_immediately_on_status_error(monkeypatch):
 
 
 def test_streamlit_dashboard_apptest_smoke(tmp_path, monkeypatch):
+    from pathlib import Path
     from streamlit.testing.v1 import AppTest
 
+    app_path = str(Path(__file__).resolve().parent.parent / "app.py")
     out_dir = tmp_path / "Output_Clips"
     out_dir.mkdir(parents=True, exist_ok=True)
     missing_cfg = tmp_path / "missing_config.json"
@@ -169,7 +171,7 @@ def test_streamlit_dashboard_apptest_smoke(tmp_path, monkeypatch):
     monkeypatch.setitem(config.DEFAULT_CONFIG, "gemini_api_key", "")
 
     # 1. Verify empty-gallery CI state renders cleanly with zero exceptions
-    at_empty = AppTest.from_file("app.py", default_timeout=45).run()
+    at_empty = AppTest.from_file(app_path, default_timeout=45).run()
     assert not list(at_empty.exception)
     assert not [e.value for e in at_empty.error if "FFmpeg not found" not in e.value]
     assert any("No clips generated yet" in m.value for m in at_empty.info)
@@ -200,7 +202,7 @@ def test_streamlit_dashboard_apptest_smoke(tmp_path, monkeypatch):
         srt_path=str(dummy_srt),
     )
 
-    at = AppTest.from_file("app.py", default_timeout=45).run()
+    at = AppTest.from_file(app_path, default_timeout=45).run()
     assert not list(at.exception)
     assert not [e.value for e in at.error if "FFmpeg not found" not in e.value]
     assert len(at.metric) == 4
