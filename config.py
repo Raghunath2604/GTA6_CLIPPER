@@ -1,5 +1,5 @@
 """
-Configuration manager for GTAG Viral Clipper Pro.
+Configuration manager for GTA6 Viral Clipper Pro.
 Handles loading and persisting settings with priority:
 config.json > .env > defaults
 """
@@ -20,12 +20,11 @@ CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 DEFAULT_CONFIG: Dict[str, Any] = {
     "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
     "streamer_urls": "\n".join([
-        "https://www.youtube.com/@JmanCurly/streams",
-        "https://www.youtube.com/@VMT/streams",
-        "https://www.youtube.com/@ElliotVR/streams",
-        "https://www.youtube.com/@K9_VR/streams",
-        "https://www.youtube.com/@TTTPIG/streams",
-        "https://www.youtube.com/@electronicwall/streams"
+        "https://www.youtube.com/@IShowSpeed/streams",
+        "https://www.youtube.com/@TGGOfficial/videos",
+        "https://www.youtube.com/@DarkViperAU/streams",
+        "https://www.youtube.com/@NoughtPointFourLIVE/streams",
+        "https://www.youtube.com/@Mythpat/streams"
     ]),
     "parallel_workers": int(os.getenv("PARALLEL_WORKERS", 3)),
     "live_mode": os.getenv("LIVE_MODE", "record_buffer"),

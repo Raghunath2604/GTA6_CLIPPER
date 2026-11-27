@@ -1,6 +1,6 @@
 """
-GTAG Viral Clipper Pro - Streamlit Control Dashboard.
-Full-stack automated short-form content factory for Gorilla Tag YouTube streamers.
+GTA6 Viral Clipper Pro - Streamlit Control Dashboard.
+Full-stack automated short-form content factory for gaming YouTube streamers.
 Supports:
 1. Direct YouTube video / stream links.
 2. Multi-channel streamer live & VOD monitoring.
@@ -32,8 +32,8 @@ from instagram_uploader import (
 )
 
 st.set_page_config(
-    page_title="GTAG Viral Clipper Pro",
-    page_icon="🦍",
+    page_title="GTA6 Viral Clipper Pro",
+    page_icon="🎬",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -344,7 +344,7 @@ def get_existing_clips() -> List[Dict[str, Any]]:
     return clips
 
 # Main Dashboard Header
-st.markdown('<div class="main-title">🦍 GTAG Viral Clipper Pro</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">🎬 GTA6 Viral Clipper Pro</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-title">Senior AI Short-Form Content Factory • Clips Live Streams & Direct YouTube Videos into >30s Shorts</div>', unsafe_allow_html=True)
 
 # Tabs for Input Modes
@@ -362,7 +362,7 @@ with tab_direct:
     with col_d2:
         st.write("")
         st.write("")
-        clip_direct_btn = st.button("🚀 Clip This Video Now", type="primary", use_container_width=True, disabled=runner.running)
+        clip_direct_btn = st.button("🚀 Clip This Video Now", type="primary", width="stretch", disabled=runner.running)
 
 with tab_multi:
     st.markdown("##### Monitor Multiple Streamer Channels in Parallel")
@@ -377,12 +377,12 @@ with tab_multi:
 
     col_m1, col_m2, col_m3 = st.columns([2, 1.5, 1.5])
     with col_m1:
-        start_multi_btn = st.button("🚀 Start Multi-Channel Pipeline", type="primary", use_container_width=True, disabled=runner.running)
+        start_multi_btn = st.button("🚀 Start Multi-Channel Pipeline", type="primary", width="stretch", disabled=runner.running)
     with col_m2:
-        if st.button("🔄 Refresh Gallery", use_container_width=True):
+        if st.button("🔄 Refresh Gallery", width="stretch"):
             st.rerun()
     with col_m3:
-        if st.button("🧹 Reset Deduplication", use_container_width=True):
+        if st.button("🧹 Reset Deduplication", width="stretch"):
             if os.path.exists(TRACKER_FILE):
                 with open(TRACKER_FILE, "w", encoding="utf-8") as f:
                     f.write("")
@@ -479,10 +479,10 @@ else:
             t_col1, t_col2 = st.columns(2)
             with t_col1:
                 if clip["clean_thumb"] and os.path.exists(clip["clean_thumb"]):
-                    st.image(clip["clean_thumb"], caption="Clean Canva Template", use_container_width=True)
+                    st.image(clip["clean_thumb"], caption="Clean Canva Template", width="stretch")
             with t_col2:
                 if clip["post_thumb"] and os.path.exists(clip["post_thumb"]):
-                    st.image(clip["post_thumb"], caption="Ready-To-Post (Burned Hook)", use_container_width=True)
+                    st.image(clip["post_thumb"], caption="Ready-To-Post (Burned Hook)", width="stretch")
 
         with col_meta:
             st.markdown(
@@ -518,7 +518,7 @@ else:
             
             with btn_col1:
                 upload_key = f"upload_yt_{folder_id}"
-                if st.button("📤 Post to YouTube Shorts", key=upload_key, type="primary", use_container_width=True):
+                if st.button("📤 Post to YouTube Shorts", key=upload_key, type="primary", width="stretch"):
                     if not clip["mp4"] or not os.path.exists(clip["mp4"]):
                         st.error("Video file does not exist.")
                     else:
@@ -539,7 +539,7 @@ else:
 
             with btn_col2:
                 ig_key = f"upload_ig_{folder_id}"
-                if st.button("📸 Post to Instagram Reels", key=ig_key, use_container_width=True):
+                if st.button("📸 Post to Instagram Reels", key=ig_key, width="stretch"):
                     if not is_instagram_connected():
                         st.info("💡 Connect your Instagram in the left sidebar (Direct Account Login or Meta Graph API) to post Reels.")
                     else:
@@ -559,19 +559,19 @@ else:
                                 st.error(f"Instagram posting notice: {ig_err}")
 
             with btn_col3:
-                if st.button("📁 Folder", key=f"open_{folder_id}", use_container_width=True):
+                if st.button("📁 Folder", key=f"open_{folder_id}", width="stretch"):
                     try:
                         os.startfile(clip["folder"])
                     except Exception:
                         st.caption(f"Path: {clip['folder']}")
 
             with btn_col4:
-                if st.button("💾 Save", key=f"save_{folder_id}", use_container_width=True):
+                if st.button("💾 Save", key=f"save_{folder_id}", width="stretch"):
                     if clip["seo_file"] and os.path.exists(clip["seo_file"]):
                         try:
                             with open(clip["seo_file"], "w", encoding="utf-8") as f:
                                 f.write(f"""==================================================
-GTAG VIRAL CLIPPER PRO - SEO & PUBLISHING METADATA
+GTA6 VIRAL CLIPPER PRO - SEO & PUBLISHING METADATA
 ==================================================
 
 [TITLE]

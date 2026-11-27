@@ -26,7 +26,7 @@ class ViralClip(BaseModel):
     trigger_type: str = Field(description="Category: LOBBY_BEEF, INSANE_JUKE, SCREAM_JUMPSCARE, CHAT_EXPLOSION, GLITCH_FAIL")
     hook_banner: str = Field(description="3-5 word high-impact ALL-CAPS hook text for top banner, e.g. HE DID NOT SURVIVE")
     title: str = Field(description="High-CTR YouTube Shorts title under 60 characters")
-    caption: str = Field(description="Short caption with hashtags like #gorillatag #gtag #gaming #vr #shorts")
+    caption: str = Field(description="Short caption with hashtags like #GTA6 #gaming #livestream #viral #shorts")
     description: str = Field(description="Keyword-rich SEO description for YouTube Shorts algorithm")
 
 class ViralAnalysisResult(BaseModel):

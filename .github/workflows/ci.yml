@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Syntax check all Python modules
+        run: |
+          python -m py_compile ai_clipper.py app.py chat_analyzer.py config.py ffmpeg_utils.py instagram_uploader.py login_cli.py media_packager.py pipeline.py processed_tracker.py run_real_clip.py stream_manager.py subtitle_generator.py video_editor.py youtube_uploader.py
+
+      - name: Run unit tests
+        run: |
+          python -m unittest discover -s tests -v

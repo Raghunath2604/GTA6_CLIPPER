@@ -1,5 +1,5 @@
 """
-Media packager for GTAG Viral Clipper Pro.
+Media packager for GTA6 Viral Clipper Pro.
 Organizes output clips into organized folders with:
 - clip_{i}.mp4 (vertical 9:16 video)
 - thumbnail_{i}_clean.jpg (Canva Pro clean frame)

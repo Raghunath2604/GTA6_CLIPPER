@@ -1,5 +1,5 @@
 """
-Parallel Stream Ingestion and yt-dlp Manager for GTAG Viral Clipper Pro.
+Parallel Stream Ingestion and yt-dlp Manager for GTA6 Viral Clipper Pro.
 Handles:
 1. Querying both streamer channel links (/streams, /live) and direct YouTube video/stream links.
 2. Checking deduplication via processed_tracker.

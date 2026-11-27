@@ -1,5 +1,5 @@
 """
-CLI runner for GTAG Viral Clipper Pro.
+CLI runner for GTA6 Viral Clipper Pro.
 Executes the full pipeline on a YouTube URL or Streamer channel.
 """
 

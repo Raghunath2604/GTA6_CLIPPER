@@ -1,5 +1,5 @@
 """
-Live Chat Explosion Velocity Calculator for GTAG Viral Clipper Pro.
+Live Chat Explosion Velocity Calculator for GTA6 Viral Clipper Pro.
 Parses yt-dlp .live_chat.json files into 10-second intervals and detects
 the top timestamp hotspots with the highest message burst velocity.
 """

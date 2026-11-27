@@ -1,5 +1,5 @@
 """
-Instagram Reels Uploader & Connection Manager (GTAG Viral Clipper Pro).
+Instagram Reels Uploader & Connection Manager (GTA6 Viral Clipper Pro).
 Supports two seamless integration pathways:
 1. Direct Account Connection (instagrapi):
    - Logs in with Instagram username/password (or session file ig_session.json).

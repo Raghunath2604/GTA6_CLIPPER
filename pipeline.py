@@ -1,5 +1,5 @@
 """
-Parallel Pipeline Orchestrator for GTAG Viral Clipper Pro.
+Parallel Pipeline Orchestrator for GTA6 Viral Clipper Pro.
 Uses ThreadPoolExecutor and thread locks to process streamer channels
 or direct YouTube videos concurrently without file collisions or CPU clashes.
 """

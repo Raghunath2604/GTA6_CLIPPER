@@ -1,5 +1,5 @@
 """
-Unified CLI Login Utility for YouTube and Canva (GTAG Viral Clipper Pro).
+Unified CLI Login Utility for YouTube, Canva, and Instagram (GTA6 Viral Clipper Pro).
 Handles interactive and command-line OAuth 2.0 authentication for both services,
 saving tokens and updating .env and config.json.
 """
@@ -192,7 +192,7 @@ class CanvaOAuthHandler(BaseHTTPRequestHandler):
             <html>
             <body style="font-family: sans-serif; text-align: center; padding-top: 50px; background: #0e1318; color: #fff;">
                 <h1 style="color: #00c4cc;">Canva Authorization Successful! &#10004;</h1>
-                <p>You can close this tab and return to the GTAG Viral Clipper Pro terminal.</p>
+                <p>You can close this tab and return to the GTA6 Viral Clipper Pro terminal.</p>
             </body>
             </html>
             """)
@@ -357,7 +357,7 @@ def login_instagram():
         return True
 
 def main():
-    parser = argparse.ArgumentParser(description="GTAG Viral Clipper Pro - CLI Login Utility")
+    parser = argparse.ArgumentParser(description="GTA6 Viral Clipper Pro - CLI Login Utility")
     parser.add_argument(
         "--service",
         choices=["youtube", "canva", "instagram", "all"],
@@ -369,7 +369,7 @@ def main():
 
     if not service:
         print("\n=======================================================")
-        print("        🔑 GTAG VIRAL CLIPPER PRO - AUTHENTICATION")
+        print("        🔑 GTA6 VIRAL CLIPPER PRO - AUTHENTICATION")
         print("=======================================================")
         print("1. Log in to YouTube (YouTube Shorts Data API v3)")
         print("2. Log in to Canva (Canva Pro Connect API & MCP)")

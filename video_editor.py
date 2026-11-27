@@ -1,5 +1,5 @@
 """
-Video Editor & Dual Thumbnail Generator for GTAG Viral Clipper Pro.
+Video Editor & Dual Thumbnail Generator for GTA6 Viral Clipper Pro.
 Handles:
 1. >30-second trimming and 9:16 vertical cropping (1080x1920).
 2. Clean text-free screenshot at 5-second mark for Canva Pro templates.
