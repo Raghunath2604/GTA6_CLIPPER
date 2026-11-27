@@ -20,6 +20,77 @@ def sanitize_filename(name: str) -> str:
     cleaned = re.sub(r"_+", "_", cleaned)
     return cleaned[:50].strip("._")
 
+def extract_tags_from_clip_info(
+    caption: str = "",
+    description: str = "",
+    seo_description: str = "",
+    trigger_type: str = "MOMENT",
+    explicit_tags: Optional[List[str]] = None,
+) -> List[str]:
+    """Build deduplicated SEO tags from explicit tags or #hashtags + defaults."""
+    raw_tags = explicit_tags
+    if not raw_tags:
+        text_for_tags = " ".join([
+            str(caption or ""),
+            str(description or ""),
+            str(seo_description or ""),
+        ])
+        extracted_tags = re.findall(r"#([A-Za-z0-9_]+)", text_for_tags)
+        raw_tags = extracted_tags + [
+            "Gaming", "Shorts", "Trending", "Viral",
+            trigger_type or "MOMENT"
+        ]
+    tags: List[str] = []
+    seen_tags = set()
+    for t in raw_tags:
+        clean_t = str(t).lstrip("#").strip()
+        if clean_t and clean_t.lower() not in seen_tags:
+            seen_tags.add(clean_t.lower())
+            tags.append(clean_t)
+    return tags
+
+
+def format_seo_metadata_text(
+    title: str,
+    hook_banner: str,
+    caption: str,
+    description: str,
+    tags: List[str],
+    viral_score: Any = 8,
+    trigger_type: str = "GAMING",
+    source_id: str = "",
+) -> str:
+    """Format unified SEO_metadata.txt content used by both packager and dashboard Save."""
+    source_line = f"Source Stream ID      : {source_id}\n" if source_id else ""
+    return f"""=== YOUTUBE SHORTS SEO METADATA ===
+[TITLE]
+{title}
+
+[HOOK BANNER]
+{hook_banner}
+
+[CAPTION (FOR TIKTOK / INSTAGRAM REELS / SHORTS)]
+{caption}
+
+[YOUTUBE SHORTS DESCRIPTION]
+{description}
+
+[TAGS]
+{', '.join(tags)}
+
+[CATEGORY]
+20 (Gaming)
+
+[METRICS]
+Viral Potential Score : {viral_score}/10
+Trigger Category      : {trigger_type}
+{source_line}
+[THUMBNAIL ASSETS GUIDE]
+1. thumbnail_clean.jpg  -> Clean gameplay frame for Canva Pro Brand Templates
+2. thumbnail.jpg        -> Ready-to-post thumbnail with hook banner
+"""
+
+
 def package_clip(
     output_base_dir: str,
     vid_id: str,
@@ -54,48 +125,23 @@ def package_clip(
         shutil.copyfile(srt_path, dest_srt)
 
     seo_txt_path = os.path.join(clip_folder, "SEO_metadata.txt")
-    raw_tags = clip_info.get("tags")
-    if not raw_tags:
-        text_for_tags = " ".join([
-            str(clip_info.get("caption", "") or ""),
-            str(clip_info.get("description", "") or ""),
-            str(clip_info.get("seo_description", "") or ""),
-        ])
-        extracted_tags = re.findall(r"#([A-Za-z0-9_]+)", text_for_tags)
-        raw_tags = extracted_tags + [
-            "Gaming", "Shorts", "Trending", "Viral",
-            clip_info.get("trigger_type", "MOMENT")
-        ]
-    tags = []
-    seen_tags = set()
-    for t in raw_tags:
-        clean_t = str(t).lstrip("#").strip()
-        if clean_t and clean_t.lower() not in seen_tags:
-            seen_tags.add(clean_t.lower())
-            tags.append(clean_t)
-    seo_content = f"""=== YOUTUBE SHORTS SEO METADATA ===
-[TITLE]
-{clip_info.get('title', '')}
-
-[HOOK BANNER]
-{clip_info.get('hook_banner', '')}
-
-[CAPTION (FOR TIKTOK / INSTAGRAM REELS / SHORTS)]
-{clip_info.get('caption', '')}
-
-[YOUTUBE SHORTS DESCRIPTION]
-{clip_info.get('description', '')}
-
-[TAGS]
-{', '.join(tags)}
-
-[CATEGORY]
-20 (Gaming)
-
-[METRICS]
-Viral Potential Score : {clip_info.get('viral_score', 8)}/10
-Trigger Category      : {clip_info.get('trigger_type', 'GAMING')}
-"""
+    tags = extract_tags_from_clip_info(
+        caption=clip_info.get("caption", ""),
+        description=clip_info.get("description", ""),
+        seo_description=clip_info.get("seo_description", ""),
+        trigger_type=clip_info.get("trigger_type", "MOMENT"),
+        explicit_tags=clip_info.get("tags"),
+    )
+    seo_content = format_seo_metadata_text(
+        title=clip_info.get("title", ""),
+        hook_banner=clip_info.get("hook_banner", ""),
+        caption=clip_info.get("caption", ""),
+        description=clip_info.get("description", ""),
+        tags=tags,
+        viral_score=clip_info.get("viral_score", 8),
+        trigger_type=clip_info.get("trigger_type", "GAMING"),
+        source_id=vid_id,
+    )
     with open(seo_txt_path, "w", encoding="utf-8") as f:
         f.write(seo_content)
 

@@ -114,16 +114,6 @@ def generate_subtitles_for_clip(
 ) -> str:
     temp_wav = f"{output_srt_path}.temp16k.wav"
     try:
-        try:
-            import av
-            orig_av_open = av.open
-            def patched_av_open(*args, **kwargs):
-                kwargs.pop("metadata_errors", None)
-                return orig_av_open(*args, **kwargs)
-            av.open = patched_av_open
-        except Exception:
-            pass
-
         ff_args = ["-y", "-loglevel", "error"]
         if start_sec and start_sec > 0:
             ff_args.extend(["-ss", f"{start_sec:.3f}"])

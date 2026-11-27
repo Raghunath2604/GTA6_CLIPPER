@@ -6,12 +6,18 @@ from types import SimpleNamespace
 from googleapiclient.errors import HttpError
 
 import config
+import canva_connector
 import processed_tracker
 import youtube_uploader
 from ai_clipper import ViralClip, sanitize_clips
 from chat_analyzer import analyze_chat_explosions, calculate_top_hotspots
 from ffmpeg_utils import check_ffmpeg_health
-from media_packager import sanitize_filename, package_clip
+from media_packager import (
+    sanitize_filename,
+    package_clip,
+    extract_tags_from_clip_info,
+    format_seo_metadata_text,
+)
 from stream_manager import is_direct_video_url, build_live_hls_ffmpeg_args
 from subtitle_generator import (
     _format_srt_timestamp,
@@ -230,6 +236,142 @@ class CorePipelineTests(unittest.TestCase):
 
         err_404 = HttpError(SimpleNamespace(status=404, reason="Not Found"), b"{}")
         self.assertIsNone(_parse_youtube_http_error(err_404))
+
+    def test_sanitize_clips_clamps_short_video_to_actual_duration(self):
+        raw = [
+            ViralClip(
+                start_seconds=5.0,
+                end_seconds=40.0,
+                viral_score=8,
+                trigger_type="CHAT",
+                hook_banner="short clip test",
+                title="Short VOD",
+                caption="Short caption",
+                description="Short desc",
+            )
+        ]
+        cleaned = sanitize_clips(raw, video_duration=20.0, target_duration=35.0, max_clips=1)
+        self.assertEqual(len(cleaned), 1)
+        self.assertEqual(cleaned[0].start_seconds, 0.0)
+        self.assertEqual(cleaned[0].end_seconds, 20.0)
+
+    def test_direct_video_url_handles_channel_live_tabs(self):
+        self.assertFalse(is_direct_video_url("https://www.youtube.com/@IShowSpeed/live/"))
+        self.assertFalse(is_direct_video_url("https://www.youtube.com/@DarkViperAU/streams"))
+        self.assertTrue(is_direct_video_url("https://www.youtube.com/live/dQw4w9WgXcQ"))
+        self.assertTrue(is_direct_video_url("https://youtu.be/wEGdTkRL-uI"))
+
+    def test_youtube_oauth_status_detects_missing_and_invalid_tokens(self):
+        with tempfile.TemporaryDirectory() as td:
+            secret_file = os.path.join(td, "client_secret.json")
+            token_file = os.path.join(td, "token.json")
+            orig_base = youtube_uploader.BASE_DIR
+            orig_sec = youtube_uploader.CLIENT_SECRET_FILE
+            orig_tok = youtube_uploader.TOKEN_FILE
+            orig_id = os.environ.get("YOUTUBE_CLIENT_ID")
+            orig_csec = os.environ.get("YOUTUBE_CLIENT_SECRET")
+            try:
+                youtube_uploader.BASE_DIR = td
+                youtube_uploader.CLIENT_SECRET_FILE = secret_file
+                youtube_uploader.TOKEN_FILE = token_file
+                os.environ["YOUTUBE_CLIENT_ID"] = "dummy-id.apps.googleusercontent.com"
+                os.environ["YOUTUBE_CLIENT_SECRET"] = "dummy-secret"
+
+                resolved = youtube_uploader.find_client_secret_file()
+                self.assertEqual(resolved, secret_file)
+                self.assertTrue(os.path.exists(secret_file))
+
+                with open(token_file, "w", encoding="utf-8") as tf:
+                    tf.write('{"invalid": "corrupt_token"}')
+                status = youtube_uploader.get_oauth_status(validate_token=False)
+                self.assertFalse(status["token_valid"])
+                self.assertTrue(status["needs_reauth"])
+            finally:
+                youtube_uploader.BASE_DIR = orig_base
+                youtube_uploader.CLIENT_SECRET_FILE = orig_sec
+                youtube_uploader.TOKEN_FILE = orig_tok
+                if orig_id is None:
+                    os.environ.pop("YOUTUBE_CLIENT_ID", None)
+                else:
+                    os.environ["YOUTUBE_CLIENT_ID"] = orig_id
+                if orig_csec is None:
+                    os.environ.pop("YOUTUBE_CLIENT_SECRET", None)
+                else:
+                    os.environ["YOUTUBE_CLIENT_SECRET"] = orig_csec
+
+    def test_save_config_does_not_copy_env_key_into_config_json(self):
+        with tempfile.TemporaryDirectory() as td:
+            fake_cfg = os.path.join(td, "config.json")
+            orig_file = config.CONFIG_FILE
+            orig_default = dict(config.DEFAULT_CONFIG)
+            try:
+                config.CONFIG_FILE = fake_cfg
+                config.DEFAULT_CONFIG["gemini_api_key"] = "SECRET_FROM_ENV"
+                loaded = config.save_config({"parallel_workers": 4})
+                self.assertEqual(loaded["gemini_api_key"], "SECRET_FROM_ENV")
+                self.assertEqual(loaded["parallel_workers"], 4)
+                with open(fake_cfg, encoding="utf-8") as f:
+                    raw = json.load(f)
+                self.assertEqual(raw["gemini_api_key"], "")
+            finally:
+                config.CONFIG_FILE = orig_file
+                config.DEFAULT_CONFIG.update(orig_default)
+
+    def test_canva_status_and_credentials_roundtrip(self):
+        with tempfile.TemporaryDirectory() as td:
+            env_path = os.path.join(td, ".env")
+            tok_path = os.path.join(td, "canva_token.json")
+            orig_env = canva_connector.ENV_FILE
+            orig_tok = canva_connector.CANVA_TOKEN_FILE
+            saved_vars = {k: os.environ.get(k) for k in ("CANVA_CLIENT_ID", "CANVA_CLIENT_SECRET", "CANVA_BRAND_TEMPLATE_ID", "CANVA_ACCESS_TOKEN", "CANVA_REFRESH_TOKEN")}
+            try:
+                canva_connector.ENV_FILE = env_path
+                canva_connector.CANVA_TOKEN_FILE = tok_path
+                for k in saved_vars:
+                    os.environ.pop(k, None)
+
+                self.assertFalse(canva_connector.is_canva_connected())
+                canva_connector.save_canva_credentials(
+                    client_id="cid",
+                    client_secret="csec",
+                    brand_template_id="tmpl1",
+                    access_token="tok123",
+                )
+                status = canva_connector.get_canva_status()
+                self.assertTrue(status["connected"])
+                self.assertTrue(status["has_client_creds"])
+                self.assertEqual(status["brand_template_id"], "tmpl1")
+
+                canva_connector.disconnect_canva()
+                self.assertFalse(canva_connector.is_canva_connected())
+            finally:
+                canva_connector.ENV_FILE = orig_env
+                canva_connector.CANVA_TOKEN_FILE = orig_tok
+                for k, v in saved_vars.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
+
+    def test_unified_seo_metadata_formatting(self):
+        tags = extract_tags_from_clip_info(
+            caption="Wild #GTA6 #Shorts clip",
+            description="More #Gaming highlights",
+            trigger_type="CLUTCH",
+        )
+        txt = format_seo_metadata_text(
+            title="GTA6 Clip #Shorts",
+            hook_banner="CRAZY ESCAPE",
+            caption="Wild #GTA6 #Shorts clip",
+            description="More #Gaming highlights",
+            tags=tags,
+            viral_score=9,
+            trigger_type="CLUTCH",
+            source_id="vid999",
+        )
+        self.assertIn("[TAGS]", txt)
+        self.assertIn("GTA6, Shorts, Gaming", txt)
+        self.assertIn("20 (Gaming)", txt)
 
 
 if __name__ == "__main__":

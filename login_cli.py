@@ -283,6 +283,11 @@ def login_canva():
     }
 
     try:
+        httpd.server_close()
+    except Exception:
+        pass
+
+    try:
         resp = requests.post(token_url, headers=headers, data=data, timeout=30)
         token_data = resp.json()
 

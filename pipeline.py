@@ -136,7 +136,8 @@ def process_single_streamer(
         rendered_folders = []
 
         for idx, clip in enumerate(selected_clips, 1):
-            emit(f"Rendering Clip #{idx}: [{clip.hook_banner}] ({clip.start_seconds:.1f}s -> {clip.end_seconds:.1f}s, {clip_duration}s)...")
+            render_dur = max(1.0, round(clip.end_seconds - clip.start_seconds, 1))
+            emit(f"Rendering Clip #{idx}: [{clip.hook_banner}] ({clip.start_seconds:.1f}s -> {clip.end_seconds:.1f}s, {render_dur:.1f}s)...")
 
             temp_clip_mp4 = os.path.join(run_tmp_dir, f"temp_render_{vid_id}_{idx}.mp4")
             temp_clean_thumb = os.path.join(run_tmp_dir, f"temp_clean_thumb_{vid_id}_{idx}.jpg")
@@ -150,14 +151,14 @@ def process_single_streamer(
                     hook_banner=clip.hook_banner,
                     api_key=config.get("gemini_api_key"),
                     start_sec=clip.start_seconds,
-                    duration_sec=float(clip_duration)
+                    duration_sec=render_dur
                 )
 
             with FFMPEG_LOCK:
                 success = render_viral_clip(
                     source_video_path=video_path,
                     start_sec=clip.start_seconds,
-                    duration_sec=float(clip_duration),
+                    duration_sec=render_dur,
                     output_clip_path=temp_clip_mp4,
                     hook_banner=clip.hook_banner,
                     clean_thumbnail_path=temp_clean_thumb,
@@ -216,7 +217,8 @@ def run_parallel_clipper(
     state_callback: Optional[Callable[[Dict[str, ChannelTaskState]], None]] = None
 ) -> Dict[str, Any]:
     max_workers = max(1, int(config.get("parallel_workers", 3)))
-    states: Dict[str, ChannelTaskState] = {url: ChannelTaskState(url) for url in channel_urls if url.strip()}
+    unique_urls = list(dict.fromkeys(u.strip() for u in channel_urls if u and u.strip()))
+    states: Dict[str, ChannelTaskState] = {url: ChannelTaskState(url) for url in unique_urls}
 
     if not states:
         return {"status": "empty", "message": "No URLs provided."}

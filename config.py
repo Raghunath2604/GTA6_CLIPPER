@@ -8,14 +8,14 @@ import os
 import json
 from typing import Dict, Any
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(BASE_DIR, ".env"))
+except ImportError:
+    pass
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
@@ -52,11 +52,20 @@ def load_config() -> Dict[str, Any]:
     return cfg
 
 def save_config(updates: Dict[str, Any]) -> Dict[str, Any]:
-    cfg = load_config()
+    cfg = DEFAULT_CONFIG.copy()
+    cfg["gemini_api_key"] = ""
+    if os.path.exists(CONFIG_FILE) and os.path.getsize(CONFIG_FILE) > 5:
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+                if isinstance(saved, dict):
+                    cfg.update(saved)
+        except Exception:
+            pass
     cfg.update(updates)
     try:
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=4)
     except Exception as e:
         print(f"[Config] Error writing {CONFIG_FILE}: {e}")
-    return cfg
+    return load_config()

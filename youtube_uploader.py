@@ -7,6 +7,7 @@ YouTube tag budget enforcement, and resumable chunk retries.
 import os
 import re
 import glob
+import json
 import time
 import shutil
 from typing import Dict, Any, List, Optional
@@ -29,6 +30,12 @@ SCOPES = [
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CLIENT_SECRET_FILE = os.path.join(BASE_DIR, "client_secret.json")
 TOKEN_FILE = os.path.join(BASE_DIR, "token.json")
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(BASE_DIR, ".env"))
+except ImportError:
+    pass
 
 
 def sanitize_youtube_tags(
@@ -90,6 +97,29 @@ def find_client_secret_file() -> Optional[str]:
             log.warning(f"Could not link client secret: {e}")
             return chosen
 
+    c_id = os.getenv("YOUTUBE_CLIENT_ID", "").strip()
+    c_sec = os.getenv("YOUTUBE_CLIENT_SECRET", "").strip()
+    if (
+        c_id and c_sec
+        and c_id != "your_youtube_client_id_here"
+        and c_sec != "your_youtube_client_secret_here"
+    ):
+        client_config = {
+            "installed": {
+                "client_id": c_id,
+                "client_secret": c_sec,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": ["http://localhost"],
+            }
+        }
+        try:
+            with open(CLIENT_SECRET_FILE, "w", encoding="utf-8") as f:
+                json.dump(client_config, f, indent=4)
+            return CLIENT_SECRET_FILE
+        except Exception as e:
+            log.warning(f"Could not write {CLIENT_SECRET_FILE} from env: {e}")
+
     return None
 
 
@@ -103,23 +133,60 @@ def is_token_present() -> bool:
     return os.path.exists(TOKEN_FILE) and os.path.getsize(TOKEN_FILE) > 10
 
 
-def get_oauth_status() -> Dict[str, Any]:
-    """Returns the current YouTube OAuth configuration status."""
+def disconnect_youtube() -> None:
+    """Remove local YouTube OAuth token cleanly."""
+    if os.path.exists(TOKEN_FILE):
+        try:
+            os.remove(TOKEN_FILE)
+        except Exception as e:
+            log.warning(f"Could not remove {TOKEN_FILE}: {e}")
+
+
+def get_oauth_status(validate_token: bool = False) -> Dict[str, Any]:
+    """Return YouTube OAuth status, optionally validating/refreshing token.json."""
     has_secret = is_client_secret_present()
     has_token = is_token_present()
+    token_valid = False
+    needs_reauth = False
+    err_detail = ""
     status_msg = "Not Configured (Missing client_secret.json)"
 
-    if has_secret and not has_token:
+    if has_token:
+        try:
+            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+            if creds.valid:
+                token_valid = True
+            elif creds.expired and creds.refresh_token:
+                if validate_token:
+                    creds.refresh(Request())
+                    with open(TOKEN_FILE, "w", encoding="utf-8") as tf:
+                        tf.write(creds.to_json())
+                    token_valid = True
+                else:
+                    token_valid = True
+            else:
+                needs_reauth = True
+                err_detail = "OAuth token missing refresh_token."
+        except Exception as e:
+            needs_reauth = True
+            err_detail = str(e)
+
+    if has_secret and token_valid:
+        status_msg = "Authenticated & Connected ✅"
+    elif has_secret and needs_reauth:
+        status_msg = "Token Expired or Revoked — Re-authorization required"
+    elif has_secret and not has_token:
         secret_path = find_client_secret_file()
         fname = os.path.basename(secret_path) if secret_path else "client_secret.json"
         status_msg = f"Ready for Login ({fname} detected ✅)"
-    elif has_secret and has_token:
-        status_msg = "Authenticated & Connected ✅"
 
     return {
         "has_secret": has_secret,
-        "has_token": has_token,
-        "status_text": status_msg
+        "has_token": token_valid if validate_token else has_token,
+        "token_valid": token_valid,
+        "needs_reauth": needs_reauth,
+        "error": err_detail,
+        "status_text": status_msg,
     }
 
 

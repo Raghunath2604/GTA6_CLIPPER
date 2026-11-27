@@ -54,8 +54,8 @@ flowchart LR
 | **Strict >30s Vertical Format** | Cuts configurable `30s–60s` clips (default `35s`) starting 5–8s before climax buildup, cropped cleanly to `1080x1920` (`9:16` @ `30 fps`). |
 | **Accurate Audio-Synced Subtitles** | Slices per-clip audio with FFmpeg to 16 kHz mono WAV and transcribes locally via `faster-whisper`, rendered in crisp `1080x1920` ASS yellow-and-black lower-third captions (`MarginV=320`). |
 | **Hook Banners & Dual Thumbnails** | Burns bold ALL-CAPS hook banners and exports both `thumbnail_{i}_clean.jpg` (text-free frame for Canva) and `thumbnail_{i}.jpg` (ready-to-post with banner). |
-| **1-Click Social Publishing** | Uploads directly to **YouTube Shorts** as Private Drafts (Category 20 Gaming + `#Shorts` + custom thumbnail) and **Instagram Reels** via Direct Login (`instagrapi`) or Meta Graph API Resumable Upload. |
-| **Live Streamlit Control Center** | Thread-safe worker monitor, interactive clip previewer, inline caption/description editor, and deduplication tracker (`processed_videos.txt`). |
+| **1-Click Social Publishing** | Uploads directly to **YouTube Shorts** (`private`, `unlisted`, or `public` with Category 20 Gaming + `#Shorts` + custom thumbnail), **Instagram Reels** (Direct Login or Meta Graph API permalink), and clean frame asset uploads to **Canva Connect**. |
+| **Live Streamlit Control Center** | Thread-safe worker monitor with auto-refreshing gallery, real-time YouTube/Instagram/Canva OAuth health checks, clip search/score filters, subtitle previewer, editable tags/SEO editor, and deduplication history (`processed_videos.txt`). |
 
 ---
 
@@ -109,7 +109,7 @@ Then open `http://localhost:8501`.
 
 **Single-Video CLI Runner:**
 ```powershell
-python run_real_clip.py "https://www.youtube.com/watch?v=VIDEO_ID"
+python run_real_clip.py "https://www.youtube.com/watch?v=VIDEO_ID" --clips 2 --duration 35 --upload-yt --privacy private
 ```
 
 ---
@@ -128,8 +128,9 @@ GTA6_CLIPPER/
 ├── media_packager.py          # Asset organizer for MP4, dual thumbnails & SEO metadata
 ├── youtube_uploader.py        # YouTube Data API v3 Shorts draft + thumbnail uploader
 ├── instagram_uploader.py      # Instagram Reels (instagrapi + Meta Graph resumable upload)
+├── canva_connector.py         # Canva Connect API OAuth asset uploader for clean thumbnails
 ├── login_cli.py               # Unified OAuth & account login CLI
-├── run_real_clip.py           # CLI pipeline runner for single URLs
+├── run_real_clip.py           # CLI pipeline runner with --clips/--duration/--upload-yt flags
 ├── config.py                  # Config priority manager (config.json > .env > defaults)
 ├── ffmpeg_utils.py            # Cross-path FFmpeg/FFprobe & GPU encoder auto-detection
 ├── logger.py                  # Thread-safe rotating file & console logger (logs/clipper.log)

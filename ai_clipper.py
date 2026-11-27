@@ -46,18 +46,20 @@ def sanitize_clips(
 ) -> List[ViralClip]:
     """Clamp timestamps, enforce >30s target duration, clean text fields, and drop overlapping slices."""
     dur = max(30.0, float(target_duration))
-    safe_vid_dur = max(dur, float(video_duration or dur))
-    max_start = max(0.0, safe_vid_dur - dur)
+    raw_vid_dur = float(video_duration or 0.0)
+    effective_dur = dur if raw_vid_dur <= 0.0 or raw_vid_dur >= dur else max(1.0, raw_vid_dur)
+    safe_vid_dur = raw_vid_dur if raw_vid_dur > 0.0 else effective_dur
+    max_start = max(0.0, safe_vid_dur - effective_dur)
 
     cleaned: List[ViralClip] = []
     for clip in clips:
         start = min(max(0.0, float(clip.start_seconds)), max_start)
         # Skip clips that heavily overlap an already chosen clip when multiple clips exist
-        if any(abs(start - c.start_seconds) < (dur * 0.4) for c in cleaned):
+        if any(abs(start - c.start_seconds) < (effective_dur * 0.4) for c in cleaned):
             continue
-        end = round(min(safe_vid_dur, start + dur), 1)
-        if end - start < 30.0 and safe_vid_dur >= 30.0:
-            start = max(0.0, safe_vid_dur - 30.0)
+        end = round(min(safe_vid_dur, start + effective_dur), 1)
+        if end - start < effective_dur and safe_vid_dur >= effective_dur:
+            start = max(0.0, safe_vid_dur - effective_dur)
             end = round(safe_vid_dur, 1)
 
         hook = " ".join((clip.hook_banner or "WATCH THIS MOMENT").upper().split()[:6])
@@ -202,7 +204,12 @@ CRITICAL RULES FOR EACH CLIP:
 - DESCRIPTION: Keyword-rich SEO description crafted to rank in YouTube Shorts search and recommendations.
 """
 
-        candidate_models = ["gemini-3.8-flash", "gemini-3-flash-preview", "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-3.5-flash"]
+        candidate_models = [
+            "gemini-3-flash-preview",
+            "gemini-flash-latest",
+            "gemini-3.8-flash",
+            "gemini-flash-lite-latest",
+        ]
         response = None
         last_model_err = None
 

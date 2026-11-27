@@ -11,6 +11,7 @@ Supports:
 """
 
 import os
+import sys
 import glob
 import json
 import shutil
@@ -21,16 +22,31 @@ from typing import Dict, Any, List
 
 import config as cfg_module
 from ffmpeg_utils import check_ffmpeg_health, detect_best_h264_encoder
+from media_packager import extract_tags_from_clip_info, format_seo_metadata_text
 from processed_tracker import is_processed, mark_processed, get_all_processed, TRACKER_FILE
 from stream_manager import get_channel_latest_stream_info, is_direct_video_url
 from pipeline import run_parallel_clipper, ChannelTaskState, process_single_streamer
-from youtube_uploader import get_oauth_status, upload_short_to_youtube, is_client_secret_present
+from youtube_uploader import (
+    get_oauth_status,
+    get_authenticated_service,
+    upload_short_to_youtube,
+    is_client_secret_present,
+    disconnect_youtube,
+    CLIENT_SECRET_FILE,
+)
 from instagram_uploader import (
     upload_reel_to_instagram,
     is_instagram_connected,
     get_instagram_status,
     login_instagram_direct,
-    save_instagram_credentials
+    save_instagram_credentials,
+    disconnect_instagram,
+)
+from canva_connector import (
+    get_canva_status,
+    save_canva_credentials,
+    disconnect_canva,
+    upload_thumbnail_asset_to_canva,
 )
 
 st.set_page_config(
@@ -84,12 +100,14 @@ class RunnerState:
     def __init__(self):
         self.lock = threading.Lock()
         self.running: bool = False
+        self.needs_gallery_refresh: bool = False
         self.logs: List[str] = []
         self.task_states: Dict[str, ChannelTaskState] = {}
 
     def reset_for_run(self, initial_log: str):
         with self.lock:
             self.running = True
+            self.needs_gallery_refresh = False
             self.logs = [initial_log]
             self.task_states = {}
 
@@ -106,6 +124,13 @@ class RunnerState:
     def finish(self):
         with self.lock:
             self.running = False
+            self.needs_gallery_refresh = True
+
+    def consume_refresh_flag(self) -> bool:
+        with self.lock:
+            flag = self.needs_gallery_refresh
+            self.needs_gallery_refresh = False
+            return flag
 
 
 @st.cache_resource
@@ -132,7 +157,7 @@ with st.sidebar:
         "🔑 Gemini API Key",
         value=st.session_state.config.get("gemini_api_key", ""),
         type="password",
-        help="Used for multimodal viral hook analysis (gemini-2.5-flash). Auto-saved in config.json."
+        help="Used for multimodal viral highlight selection (gemini-3-flash-preview / gemini-flash-latest)."
     )
     if gemini_key != st.session_state.config.get("gemini_api_key", ""):
         st.session_state.config["gemini_api_key"] = gemini_key
@@ -230,19 +255,57 @@ with st.sidebar:
 
     st.divider()
     st.subheader("🔴 YouTube Shorts OAuth")
-    oauth_info = get_oauth_status()
-    if oauth_info["has_token"]:
+
+    @st.cache_data(ttl=60)
+    def _cached_yt_oauth():
+        return get_oauth_status(validate_token=True)
+
+    oauth_info = _cached_yt_oauth()
+    if oauth_info.get("token_valid"):
         st.success("Authenticated & Connected ✅")
-    elif oauth_info["has_secret"]:
-        st.info("Ready for Login (client_secret.json found ✅)")
+        if st.button("🔌 Disconnect YouTube", key="sb_yt_disconnect_btn", width="stretch"):
+            disconnect_youtube()
+            _cached_yt_oauth.clear()
+            st.rerun()
+    elif oauth_info.get("has_secret"):
+        if oauth_info.get("needs_reauth"):
+            st.warning("⚠️ Token Expired / Revoked — Re-authorize below")
+        else:
+            st.info(oauth_info["status_text"])
+        if st.button("🔐 Connect / Re-authorize YouTube", key="sb_yt_auth_btn", type="primary", width="stretch"):
+            with st.spinner("Waiting for Google OAuth sign-in in your browser..."):
+                try:
+                    get_authenticated_service(interactive=True)
+                    _cached_yt_oauth.clear()
+                    st.success("YouTube connected!")
+                    st.rerun()
+                except Exception as auth_err:
+                    st.error(f"YouTube sign-in notice: {auth_err}")
     else:
         st.warning(oauth_info["status_text"])
+
+    with st.expander("📄 Update client_secret.json"):
+        uploaded_secret = st.file_uploader("Upload Google OAuth JSON", type=["json"], key="sb_yt_secret_up")
+        if uploaded_secret is not None:
+            try:
+                raw_bytes = uploaded_secret.getvalue()
+                json.loads(raw_bytes.decode("utf-8"))
+                with open(CLIENT_SECRET_FILE, "wb") as sf:
+                    sf.write(raw_bytes)
+                _cached_yt_oauth.clear()
+                st.success("Saved client_secret.json!")
+                st.rerun()
+            except Exception as sec_err:
+                st.error(f"Invalid JSON file: {sec_err}")
 
     st.divider()
     st.subheader("📸 Instagram Reels Connection")
     ig_status = get_instagram_status()
     if ig_status["connected"]:
         st.success(f"{ig_status['status_text']} ({ig_status['method']})")
+        if st.button("🔌 Disconnect Instagram", key="sb_ig_disconnect_btn", width="stretch"):
+            disconnect_instagram()
+            st.rerun()
     else:
         st.warning("Not Connected")
         with st.expander("🔑 Connect Instagram Account"):
@@ -274,6 +337,28 @@ with st.sidebar:
                         st.rerun()
                     else:
                         st.warning("Enter both token and account ID.")
+
+    st.divider()
+    st.subheader("🎨 Canva Pro Connect")
+    canva_info = get_canva_status()
+    if canva_info["connected"]:
+        st.success(canva_info["status_text"])
+        if st.button("🔌 Disconnect Canva", key="sb_canva_disconnect_btn", width="stretch"):
+            disconnect_canva()
+            st.rerun()
+    else:
+        st.info(canva_info["status_text"])
+        with st.expander("🛠️ Configure Canva Credentials"):
+            c_id = st.text_input("Canva Client ID", key="sb_canva_id")
+            c_sec = st.text_input("Canva Client Secret", type="password", key="sb_canva_sec")
+            c_tmpl = st.text_input("Brand Template ID (Optional)", key="sb_canva_tmpl")
+            if st.button("Save Canva Credentials", key="sb_canva_save_btn"):
+                if c_id and c_sec:
+                    save_canva_credentials(client_id=c_id, client_secret=c_sec, brand_template_id=c_tmpl or None)
+                    st.success("Saved to .env! Run `Login_CLI.bat --service canva` to finish OAuth.")
+                    st.rerun()
+                else:
+                    st.warning("Enter both Client ID and Client Secret.")
 
 
 def _update_clip_metadata(folder_path: str, updates: Dict[str, Any]) -> Dict[str, Any]:
@@ -431,6 +516,13 @@ with tab_multi:
                     f.write("")
             st.toast("Cleared processed_videos.txt!", icon="✨")
 
+    processed_ids = sorted(get_all_processed())
+    with st.expander(f"📜 Processed Streams History ({len(processed_ids)} IDs tracked)"):
+        if processed_ids:
+            st.code("\n".join(processed_ids), language=None)
+        else:
+            st.caption("No stream IDs recorded yet.")
+
 def pipeline_worker(target_urls: List[str], current_cfg: Dict[str, Any]):
     def log_cb(msg: str):
         runner.add_log(msg)
@@ -476,6 +568,9 @@ def render_execution_monitor():
         logs_snapshot = list(runner.logs)
         states_snapshot = dict(runner.task_states)
 
+    if not is_running and runner.consume_refresh_flag():
+        st.rerun()
+
     if is_running or logs_snapshot:
         with st.expander("📊 Live Execution Monitor & Worker Status", expanded=is_running):
             if states_snapshot:
@@ -504,17 +599,56 @@ clips_list = get_existing_clips()
 if not clips_list:
     st.info("No clips generated yet. Paste a YouTube URL above and click 'Clip This Video Now' to create your first set of viral >30s shorts!")
 else:
-    st.caption(f"Showing {len(clips_list)} clips organized in `Output_Clips/`:")
-    
-    for idx, clip in enumerate(clips_list):
+    avg_score = sum(float(c.get("viral_score", 0)) for c in clips_list) / len(clips_list)
+    yt_posted = sum(1 for c in clips_list if c.get("youtube_upload") or c["folder_name"] in st.session_state.upload_status)
+    ig_posted = sum(1 for c in clips_list if c.get("instagram_upload") or c["folder_name"] in st.session_state.get("ig_upload_status", {}))
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Clips", len(clips_list))
+    m2.metric("Avg Viral Score", f"{avg_score:.1f} / 10")
+    m3.metric("Posted to YouTube", yt_posted)
+    m4.metric("Posted to Instagram", ig_posted)
+
+    f1, f2 = st.columns([2.5, 1.5])
+    with f1:
+        filter_query = st.text_input("🔍 Filter clips (title, caption, or tag):", key="gallery_filter")
+    with f2:
+        min_score = st.slider("⭐ Min Viral Score:", min_value=1, max_value=10, value=1, key="gallery_min_score")
+
+    q = filter_query.strip().lower()
+    filtered_clips = [
+        c for c in clips_list
+        if int(c.get("viral_score", 0)) >= min_score
+        and (
+            not q
+            or q in c["title"].lower()
+            or q in c["caption"].lower()
+            or q in " ".join(c.get("tags", [])).lower()
+        )
+    ]
+    st.caption(f"Showing {len(filtered_clips)} of {len(clips_list)} clip(s) organized in `Output_Clips/`:")
+
+    canva_connected = get_canva_status().get("connected", False)
+
+    for idx, clip in enumerate(filtered_clips):
         folder_id = clip["folder_name"]
-        
+
         st.markdown('<div class="clip-card">', unsafe_allow_html=True)
         col_vid, col_meta = st.columns([1, 1.4], gap="medium")
-        
+
         with col_vid:
             if clip["mp4"] and os.path.exists(clip["mp4"]):
                 st.video(clip["mp4"])
+                if st.toggle("📦 Prepare MP4 Download", key=f"prep_dl_{folder_id}"):
+                    with open(clip["mp4"], "rb") as vf:
+                        st.download_button(
+                            "⬇️ Download Clip MP4",
+                            data=vf.read(),
+                            file_name=f"{folder_id}.mp4",
+                            mime="video/mp4",
+                            key=f"dl_{folder_id}",
+                            width="stretch",
+                        )
             else:
                 st.warning("Video file not found.")
 
@@ -523,9 +657,21 @@ else:
             with t_col1:
                 if clip["clean_thumb"] and os.path.exists(clip["clean_thumb"]):
                     st.image(clip["clean_thumb"], caption="Clean Canva Template", width="stretch")
+                    if canva_connected and st.button("🎨 Send to Canva", key=f"canva_{folder_id}", width="stretch"):
+                        with st.spinner("Uploading clean frame to Canva..."):
+                            cres = upload_thumbnail_asset_to_canva(clip["clean_thumb"], asset_name=f"{folder_id}_clean")
+                            if cres.get("status") == "success":
+                                st.success(f"Sent to Canva (Asset `{cres.get('asset_id')}`)")
+                            else:
+                                st.error(cres.get("error", "Canva upload failed"))
             with t_col2:
                 if clip["post_thumb"] and os.path.exists(clip["post_thumb"]):
                     st.image(clip["post_thumb"], caption="Ready-To-Post (Burned Hook)", width="stretch")
+
+            if clip["srt"] and os.path.exists(clip["srt"]):
+                with st.expander("📝 View Subtitles (.srt)"):
+                    with open(clip["srt"], "r", encoding="utf-8", errors="replace") as sf:
+                        st.text_area("SRT Transcript", value=sf.read(), height=140, key=f"srt_view_{folder_id}", disabled=True)
 
         with col_meta:
             st.markdown(
@@ -557,6 +703,29 @@ else:
                 height=100
             )
 
+            meta_row1, meta_row2 = st.columns([2.2, 1.0])
+            with meta_row1:
+                edit_tags_str = st.text_input(
+                    "SEO Tags (comma-separated):",
+                    value=", ".join(clip.get("tags", [])),
+                    key=f"tags_{folder_id}",
+                )
+            with meta_row2:
+                yt_privacy = st.selectbox(
+                    "YouTube Privacy:",
+                    options=["private", "unlisted", "public"],
+                    index=0,
+                    key=f"priv_{folder_id}",
+                )
+
+            edited_explicit_tags = [t.strip().lstrip("#") for t in edit_tags_str.split(",") if t.strip()]
+            effective_tags = extract_tags_from_clip_info(
+                caption=edit_caption,
+                description=edit_desc,
+                trigger_type=clip["trigger_type"],
+                explicit_tags=edited_explicit_tags or None,
+            )
+
             yt_up = st.session_state.upload_status.get(folder_id) or clip.get("youtube_upload")
             ig_up = st.session_state.get("ig_upload_status", {}).get(folder_id) or clip.get("instagram_upload")
 
@@ -570,14 +739,14 @@ else:
                     if not clip["mp4"] or not os.path.exists(clip["mp4"]):
                         st.error("Video file does not exist.")
                     else:
-                        with st.spinner("Authorizing and uploading to YouTube Shorts as Private Draft..."):
+                        with st.spinner(f"Uploading to YouTube Shorts ({yt_privacy})..."):
                             try:
                                 res = upload_short_to_youtube(
                                     video_path=clip["mp4"],
                                     title=edit_title,
                                     description=edit_desc,
-                                    tags=clip.get("tags"),
-                                    privacy_status="private",
+                                    tags=effective_tags,
+                                    privacy_status=yt_privacy,
                                     thumbnail_path=clip.get("post_thumb"),
                                     interactive=False,
                                 )
@@ -614,7 +783,12 @@ else:
             with btn_col3:
                 if st.button("📁 Folder", key=f"open_{folder_id}", width="stretch"):
                     try:
-                        os.startfile(clip["folder"])
+                        if sys.platform == "win32":
+                            os.startfile(clip["folder"])
+                        elif sys.platform == "darwin":
+                            subprocess.Popen(["open", clip["folder"]])
+                        else:
+                            subprocess.Popen(["xdg-open", clip["folder"]])
                     except Exception:
                         st.caption(f"Path: {clip['folder']}")
 
@@ -626,35 +800,21 @@ else:
                             "caption": edit_caption,
                             "description": edit_desc,
                             "seo_description": edit_desc,
+                            "tags": effective_tags,
                         })
 
                         seo_target = clip["seo_file"] or os.path.join(clip["folder"], "SEO_metadata.txt")
                         with open(seo_target, "w", encoding="utf-8") as f:
-                            f.write(f"""==================================================
-GTA6 VIRAL CLIPPER PRO - SEO & PUBLISHING METADATA
-==================================================
-
-[TITLE]
-{edit_title}
-
-[HOOK BANNER]
-{clip['hook']}
-
-[CAPTION (FOR TIKTOK / INSTAGRAM REELS / SHORTS)]
-{edit_caption}
-
-[YOUTUBE SHORTS DESCRIPTION]
-{edit_desc}
-
-[METRICS & VIRAL ANALYSIS]
-Viral Potential Score : {clip['viral_score']} / 10
-Trigger Category      : {clip['trigger_type']}
-Source Stream ID      : {clip['folder_name'].split('_Clip')[0]}
-
-[THUMBNAIL ASSETS GUIDE]
-1. thumbnail_clean.jpg  -> Clean gameplay frame for Canva Pro Brand Templates
-2. thumbnail.jpg        -> Ready-to-post thumbnail with hook banner
-""")
+                            f.write(format_seo_metadata_text(
+                                title=edit_title,
+                                hook_banner=clip["hook"],
+                                caption=edit_caption,
+                                description=edit_desc,
+                                tags=effective_tags,
+                                viral_score=clip["viral_score"],
+                                trigger_type=clip["trigger_type"],
+                                source_id=clip["folder_name"].split("_Clip")[0],
+                            ))
                         st.toast("Saved changes to metadata.json and SEO_metadata.txt!", icon="💾")
                     except Exception as save_err:
                         st.error(f"Save error: {save_err}")

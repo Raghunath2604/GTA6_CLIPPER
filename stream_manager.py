@@ -8,6 +8,7 @@ Handles:
 """
 
 import os
+import re
 import time
 import shutil
 from typing import Dict, Any, Optional, Tuple
@@ -56,7 +57,9 @@ def _base_ydl_opts(**extra: Any) -> Dict[str, Any]:
 def is_direct_video_url(url: str) -> bool:
     """Checks if a URL points directly to a single video/stream rather than a channel."""
     u = url.strip().lower()
-    return any(p in u for p in ["watch?v=", "youtu.be/", "/live/", "/shorts/"])
+    if any(p in u for p in ["watch?v=", "youtu.be/", "/shorts/"]):
+        return True
+    return bool(re.search(r"youtube\.com/live/[a-z0-9_-]{6,}", u))
 
 def get_channel_latest_stream_info(input_url: str) -> Optional[Dict[str, Any]]:
     clean_url = input_url.strip()
@@ -304,7 +307,6 @@ def download_stream_or_buffer(
                 actual_video_path = candidate
             break
 
-    from ffmpeg_utils import get_media_duration
     if actual_video_path and os.path.exists(actual_video_path):
         dur = get_media_duration(actual_video_path)
         # If downloaded raw file exceeds max_duration_minutes, trim head with ultrafast stream copy

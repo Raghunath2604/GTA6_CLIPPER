@@ -11,6 +11,7 @@ Handles:
 import os
 import time
 import shutil
+import threading
 from typing import Optional
 from PIL import Image, ImageDraw, ImageFont
 
@@ -138,6 +139,7 @@ def render_viral_clip(
     thumb_sec = 5.0 if duration_sec >= 8.0 else max(0.5, duration_sec / 2.0)
     clean_thumb_args = [
         "-y",
+        "-loglevel", "error",
         "-ss", f"{start_sec + thumb_sec:.3f}",
         "-i", source_video_path,
         "-vf", "crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
@@ -149,7 +151,8 @@ def render_viral_clip(
     run_ffmpeg(clean_thumb_args, timeout=60)
     print(f"[Video Editor] Exported Canva Pro clean frame at {thumb_sec:.1f}s: {clean_thumbnail_path}")
 
-    banner_png_path = os.path.join(temp_dir, f"temp_banner_{os.getpid()}.png")
+    unique_suffix = f"{os.getpid()}_{threading.get_ident()}"
+    banner_png_path = os.path.join(temp_dir, f"temp_banner_{unique_suffix}.png")
     if hook_banner and burn_banner:
         create_hook_banner_overlay(hook_banner, banner_png_path)
         if os.path.exists(clean_thumbnail_path):
@@ -175,7 +178,7 @@ def render_viral_clip(
         filters.append(f"{current_v}[1:v]overlay=0:0:eof_action=repeat[vbanner]")
         current_v = "[vbanner]"
 
-    temp_burn_ass = os.path.join(temp_dir, f"temp_burn_{os.getpid()}.ass")
+    temp_burn_ass = os.path.join(temp_dir, f"temp_burn_{unique_suffix}.ass")
     if burn_subtitles and srt_path and os.path.exists(srt_path):
         try:
             _convert_srt_to_vertical_ass(srt_path, temp_burn_ass)

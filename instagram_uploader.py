@@ -23,6 +23,12 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IG_SESSION_FILE = os.path.join(BASE_DIR, "ig_session.json")
 ENV_FILE = os.path.join(BASE_DIR, ".env")
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(ENV_FILE)
+except ImportError:
+    pass
+
 
 def get_instagram_config() -> Dict[str, str]:
     """Retrieves Instagram credentials from environment."""
@@ -351,15 +357,40 @@ def upload_reel_meta_graph(
         pub_res = requests.post(pub_url, data={"access_token": token, "creation_id": container_id}, timeout=30).json()
         if "id" in pub_res:
             media_id = pub_res["id"]
+            reel_url = ""
+            shortcode = ""
+            try:
+                info_res = requests.get(
+                    f"{base_url}/{media_id}",
+                    params={"access_token": token, "fields": "permalink,shortcode"},
+                    timeout=15,
+                ).json()
+                reel_url = info_res.get("permalink", "")
+                shortcode = info_res.get("shortcode", "")
+            except Exception:
+                pass
+            if not reel_url and shortcode:
+                reel_url = f"https://www.instagram.com/reel/{shortcode}/"
             return {
                 "status": "success",
                 "method": "meta_graph",
                 "media_id": media_id,
-                "url": f"https://www.instagram.com/p/{media_id}/"
+                "code": shortcode,
+                "url": reel_url or f"https://www.instagram.com/"
             }
         return {"status": "error", "error": pub_res.get("error", {}).get("message", "Publish failed")}
     except Exception as e:
         return {"status": "error", "error": str(e)}
+
+
+def disconnect_instagram() -> None:
+    """Clear local Instagram session cache and .env credentials."""
+    if os.path.exists(IG_SESSION_FILE):
+        try:
+            os.remove(IG_SESSION_FILE)
+        except Exception as e:
+            log.warning(f"Could not remove {IG_SESSION_FILE}: {e}")
+    save_instagram_credentials(username="", password="", access_token="", account_id="")
 
 
 def upload_reel_to_instagram(
