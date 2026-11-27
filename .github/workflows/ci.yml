@@ -29,4 +29,11 @@ jobs:
 
       - name: Run pytest suite
         run: |
-          python -m pytest -v
+          set +e
+          python -m pytest -v --tb=short > pytest.out 2>&1
+          rc=$?
+          cat pytest.out
+          if [ "$rc" -ne 0 ]; then
+            python -c "txt=open('pytest.out', encoding='utf-8', errors='replace').read(); txt=txt.replace('%','%25').replace('\r','').replace('\n','%0A'); print('::error::' + txt[-3500:])"
+          fi
+          exit $rc
