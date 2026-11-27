@@ -109,7 +109,7 @@ def process_single_streamer(
         log(f"Identified {len(hotspots)} hotspots: {', '.join([h.formatted_time for h in hotspots])}")
 
         state.update(f"Running Multimodal AI Clipper (>{clip_duration}s)...", 60)
-        log(f"Uploading to Gemini 2.5 Flash for {clip_duration}s viral moments extraction...")
+        log(f"Uploading to Gemini AI for {clip_duration}s viral moments extraction...")
         ai_result = analyze_stream_for_viral_clips(
             video_path=video_path,
             hotspots=hotspots,

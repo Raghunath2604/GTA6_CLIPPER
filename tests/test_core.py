@@ -68,6 +68,22 @@ class CorePipelineTests(unittest.TestCase):
     def test_default_streamers_configured(self):
         self.assertIn("IShowSpeed", config.DEFAULT_CONFIG["streamer_urls"])
 
+    def test_empty_gemini_key_in_config_json_does_not_clobber_env(self):
+        with tempfile.TemporaryDirectory() as td:
+            fake_cfg = os.path.join(td, "config.json")
+            with open(fake_cfg, "w", encoding="utf-8") as f:
+                f.write('{"gemini_api_key": ""}')
+            orig_file = config.CONFIG_FILE
+            orig_default = dict(config.DEFAULT_CONFIG)
+            try:
+                config.CONFIG_FILE = fake_cfg
+                config.DEFAULT_CONFIG["gemini_api_key"] = "TEST_ENV_KEY"
+                loaded = config.load_config()
+                self.assertEqual(loaded["gemini_api_key"], "TEST_ENV_KEY")
+            finally:
+                config.CONFIG_FILE = orig_file
+                config.DEFAULT_CONFIG.update(orig_default)
+
 
 if __name__ == "__main__":
     unittest.main()

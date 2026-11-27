@@ -43,7 +43,10 @@ def load_config() -> Dict[str, Any]:
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 saved = json.load(f)
-                cfg.update(saved)
+                for k, v in saved.items():
+                    if k == "gemini_api_key" and not v and cfg.get("gemini_api_key"):
+                        continue
+                    cfg[k] = v
         except Exception as e:
             print(f"[Config] Error reading {CONFIG_FILE}: {e}")
     return cfg
